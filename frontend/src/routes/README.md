@@ -1,0 +1,21 @@
+# Routes
+
+TanStack Router uses **file-based routing**. Every `.tsx` file in this directory
+defines a route. The only root layout is `src/routes/__root.tsx`.
+
+## Conventions
+
+| File | URL |
+| --- | --- |
+| `index.tsx` | `/` |
+| `about.tsx` | `/about` |
+| `users/index.tsx` | `/users` |
+| `users/$id.tsx` | `/users/:id` (dynamic — bare `$`, no curly braces) |
+| `posts/{-$category}.tsx` | `/posts/:category?` (optional segment) |
+| `files/$.tsx` | `/files/*` (splat — read via `_splat` param, never `*`) |
+| `_layout.tsx` | layout route (renders children via `<Outlet />`) |
+| `__root.tsx` | app shell — wraps every page; preserve `<Outlet />` |
+
+`routeTree.gen.ts` is auto-generated (gitignored). Don't edit it by hand —
+it's regenerated automatically by `@tanstack/router-plugin` on `npm run dev`
+or `npm run build`.
