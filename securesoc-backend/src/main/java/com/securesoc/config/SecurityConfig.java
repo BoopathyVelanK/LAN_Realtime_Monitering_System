@@ -17,6 +17,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.security.authentication.ProviderManager;
 
 import java.util.List;
 
@@ -28,9 +29,9 @@ public class SecurityConfig {
     private final CorsProperties corsProperties;
 
     public SecurityConfig(
-        JwtAuthenticationFilter jwtAuthenticationFilter,
-        AgentTokenAuthFilter agentTokenAuthFilter,
-        CorsProperties corsProperties
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            AgentTokenAuthFilter agentTokenAuthFilter,
+            CorsProperties corsProperties
     ) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.agentTokenAuthFilter = agentTokenAuthFilter;
@@ -44,26 +45,29 @@ public class SecurityConfig {
 
     @Bean
     public AuthenticationManager authenticationManager(
-        UserDetailsService userDetailsService, PasswordEncoder passwordEncoder
+            UserDetailsService userDetailsService,
+            PasswordEncoder passwordEncoder
     ) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
-        return new org.springframework.security.authentication.ProviderManager(provider);
+
+        return new ProviderManager(provider);
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable) // stateless JWT API, no cookies/session to forge
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/login", "/auth/refresh", "/agents/register").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(agentTokenAuthFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .csrf(AbstractHttpConfigurer::disable) // stateless JWT API, no cookies/session to forge
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/auth/login", "/auth/refresh", "/agents/register").permitAll()
+                        .requestMatchers("/actuator/health").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .addFilterBefore(agentTokenAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
