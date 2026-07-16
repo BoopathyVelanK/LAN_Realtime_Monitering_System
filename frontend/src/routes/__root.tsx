@@ -5,6 +5,7 @@ import {
   createRootRouteWithContext,
   useRouter,
 } from "@tanstack/react-router";
+import { AuthProvider } from "@/auth/AuthContext";
 
 function NotFoundComponent() {
   return (
@@ -77,8 +78,13 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      {/* AuthProvider needs router context (useNavigate) for logout/session-
+          expiry redirects, so it lives here rather than in main.tsx, which
+          renders above <RouterProvider>. */}
+      <AuthProvider>
+        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+        <Outlet />
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

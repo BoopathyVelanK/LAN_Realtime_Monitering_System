@@ -1,13 +1,14 @@
-import { Link, useRouterState } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useEffect, type ReactNode } from "react";
 import {
   LayoutGrid, Monitor, AppWindow, Clock, Usb, ShieldOff, Activity, BarChart3, Gauge,
   Bell, FileText, GraduationCap, ScrollText, Settings as SettingsIcon, Search, Cpu,
   Database, Network, User, Users as UsersIcon, Building2, FlaskConical, Server,
   ShieldCheck, FileWarning, Archive, HelpCircle, LogOut, Globe, UserSquare2, Boxes,
 } from "lucide-react";
+import { useAuth } from "@/auth/AuthContext";
 
-type NavItem = { to: string; label: string; icon: any };
+type NavItem = { to: string; label: string; icon: any; action?: "sign-out" };
 
 const navGroups: { title: string; items: NavItem[] }[] = [
   {
@@ -54,7 +55,7 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/settings", label: "SETTINGS", icon: SettingsIcon },
       { to: "/help", label: "HELP", icon: HelpCircle },
-      { to: "/login", label: "SIGN OUT", icon: LogOut },
+      { to: "/login", label: "SIGN OUT", icon: LogOut, action: "sign-out" },
     ],
   },
 ];
@@ -72,6 +73,27 @@ export function AppShell({
 }) {
   const { location } = useRouterState();
   const path = location.pathname;
+  const navigate = useNavigate();
+  const { user, isAuthenticated, isInitializing, logout } = useAuth();
+
+  // Route guard: every page that renders AppShell is a protected page.
+  // Redirect to /login once we've finished checking localStorage for an
+  // existing session (isInitializing avoids a false redirect on first
+  // paint of a hard refresh, before hydration has run).
+  useEffect(() => {
+    if (!isInitializing && !isAuthenticated) {
+      navigate({ to: "/login", replace: true });
+    }
+  }, [isInitializing, isAuthenticated, navigate]);
+
+  // Don't flash protected content while redirecting or before we know
+  // whether a session exists.
+  if (isInitializing || !isAuthenticated) {
+    return null;
+  }
+
+  const primaryRole = user?.roles[0] ?? "USER";
+  const displayName = user?.fullName || user?.username || "";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -104,10 +126,14 @@ export function AppShell({
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right text-xs hidden sm:block">
-              <div className="text-primary font-bold">ADMIN</div>
-              <div className="text-muted-foreground">soc.admin@securesoc</div>
+              <div className="text-primary font-bold">{primaryRole}</div>
+              <div className="text-muted-foreground">{displayName}</div>
             </div>
-            <button className="bg-primary text-primary-foreground p-2 rounded">
+            <button
+              onClick={() => void logout()}
+              title="Sign out"
+              className="bg-primary text-primary-foreground p-2 rounded hover:opacity-90"
+            >
               <User className="w-5 h-5" />
             </button>
           </div>
@@ -132,6 +158,20 @@ export function AppShell({
                   {group.items.map((item) => {
                     const active = path === item.to;
                     const Icon = item.icon;
+
+                    if (item.action === "sign-out") {
+                      return (
+                        <button
+                          key={item.to}
+                          onClick={() => void logout()}
+                          className="flex items-center gap-3 px-4 py-2 rounded-md text-[11px] font-bold tracking-wider transition-colors text-sidebar-foreground hover:bg-muted w-full text-left"
+                        >
+                          <Icon className="w-4 h-4 shrink-0" />
+                          {item.label}
+                        </button>
+                      );
+                    }
+
                     return (
                       <Link
                         key={item.to}

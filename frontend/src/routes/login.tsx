@@ -1,8 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Shield, Lock, User } from "lucide-react";
-import { useState, type FormEvent } from "react";
-import { authApi } from "@/api/authApi";
-import { tokenStorage } from "@/auth/tokenStorage";
+import { useEffect, useState, type FormEvent } from "react";
+import { useAuth } from "@/auth/AuthContext";
 
 export const Route = createFileRoute("/login")({
   head: () => ({ meta: [{ title: "SecureSOC — Sign In" }] }),
@@ -11,19 +10,26 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [role, setRole] = useState<"admin" | "faculty" | "assistant">("admin");
-  const [usernameOrEmail, setUsernameOrEmail] = useState("soc.admin@securesoc");
+  const { login, isAuthenticated, isInitializing } = useAuth();
+  const [usernameOrEmail, setUsernameOrEmail] = useState("soc.admin@securesoc.local");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Already signed in (e.g. hit /login directly with a valid session) -
+  // bounce straight to the dashboard instead of showing the form.
+  useEffect(() => {
+    if (!isInitializing && isAuthenticated) {
+      navigate({ to: "/", replace: true });
+    }
+  }, [isInitializing, isAuthenticated, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const response = await authApi.login({ usernameOrEmail, password });
-      tokenStorage.setTokens(response.accessToken, response.refreshToken);
+      await login(usernameOrEmail, password);
       navigate({ to: "/" });
     } catch {
       setError("Could not sign in. Check your username and password.");
@@ -31,6 +37,10 @@ function LoginPage() {
       setSubmitting(false);
     }
   };
+
+  if (isInitializing || isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-background">
@@ -93,23 +103,11 @@ function LoginPage() {
               </div>
             </label>
 
-            <div>
-              <div className="text-[10px] tracking-widest text-muted-foreground font-bold mb-2">ROLE</div>
-              <div className="grid grid-cols-3 gap-2">
-                {(["admin", "faculty", "assistant"] as const).map((r) => (
-                  <button
-                    type="button"
-                    key={r}
-                    onClick={() => setRole(r)}
-                    className={`py-2 rounded text-[10px] font-bold tracking-widest border ${
-                      role === r ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"
-                    }`}
-                  >
-                    {r.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Role selection was removed here - it never sent anything to
+                the backend and could imply a user gets to pick their own
+                role. The signed-in user's actual role(s) come back from
+                POST /auth/login (AuthResponse.roles) and are shown in the
+                app header/nav after sign-in instead. */}
 
             <div className="flex items-center justify-between text-xs">
               <label className="flex items-center gap-2">
