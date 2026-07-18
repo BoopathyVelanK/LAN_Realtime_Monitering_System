@@ -5,11 +5,25 @@ import {
   AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
   BarChart, Bar, PieChart, Pie, Cell, Legend,
 } from "recharts";
+import { useEndpoints } from "@/api/queries";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [{ title: "SecureSOC — Dashboard" }] }),
   component: Dashboard,
 });
+
+// -----------------------------------------------------------------------
+// MOCK DATA (Phase 4A audit): everything below is illustrative and stays
+// that way until the corresponding backend exists:
+//   - networkSeries / cpuSeries: no historical resource-usage metrics
+//     endpoint (agent heartbeats aren't persisted as a time series).
+//   - riskPie: no risk-scoring engine (Phase 4 detection engine).
+//   - recentEvents: MonitoringController is ingest-only (POST), there is
+//     no GET endpoint to read login/USB/VPN/idle events back - and no
+//     alerts backend either. See dashboardApi.ts's header comment.
+// Only the "TOTAL ENDPOINTS" hero card below is wired to real data via
+// GET /endpoints (see useEndpoints() in the Dashboard component).
+// -----------------------------------------------------------------------
 
 const networkSeries = Array.from({ length: 24 }, (_, i) => ({
   t: `${String(i).padStart(2, "0")}:00`,
@@ -39,20 +53,27 @@ const recentEvents = [
 ];
 
 function Dashboard() {
+  // Real data - GET /endpoints exists on the backend (EndpointController).
+  const { data: endpoints, isLoading: endpointsLoading } = useEndpoints();
+  const total = endpoints?.length ?? 0;
+  const online = endpoints?.filter((e) => e.status === "ONLINE").length ?? 0;
+  const offline = total - online;
+
   return (
     <AppShell title="Operations Overview" subtitle="DASHBOARD">
       <div className="p-6 grid grid-cols-12 gap-5">
         {/* Hero KPIs */}
         <div className="col-span-4 bg-card border border-border rounded-lg p-6">
           <div className="text-[11px] tracking-widest text-muted-foreground font-bold">TOTAL ENDPOINTS</div>
-          <div className="text-5xl font-bold mt-4 tracking-tight">142</div>
+          <div className="text-5xl font-bold mt-4 tracking-tight">{endpointsLoading ? "—" : total}</div>
           <div className="flex items-center gap-2 mt-6 text-xs">
             <TrendingUp className="w-4 h-4 text-primary" />
-            <span className="font-bold text-primary">128 ONLINE</span>
-            <span className="text-muted-foreground">· 14 OFFLINE</span>
+            <span className="font-bold text-primary">{endpointsLoading ? "—" : online} ONLINE</span>
+            <span className="text-muted-foreground">· {endpointsLoading ? "—" : offline} OFFLINE</span>
           </div>
         </div>
 
+        {/* MOCK: no alerts backend yet - see file header comment. */}
         <div className="col-span-4 bg-primary text-primary-foreground rounded-lg p-6 flex flex-col">
           <div className="text-[11px] tracking-widest opacity-80 font-bold">CRITICAL ALERTS</div>
           <div className="text-5xl font-bold mt-4">04</div>
@@ -64,6 +85,9 @@ function Dashboard() {
           </button>
         </div>
 
+        {/* MOCK: ACTIVE USERS / HIGH RISK / IDLE SYSTEMS / LAN DATA all
+            need backend that doesn't exist yet (user-session tracking,
+            risk engine, idle-event aggregation, network-usage totals). */}
         <div className="col-span-4 grid grid-cols-2 gap-3">
           <StatCard label="ACTIVE USERS" value="118" />
           <StatCard label="HIGH RISK" value="12" accent="danger" />
@@ -71,7 +95,7 @@ function Dashboard() {
           <StatCard label="LAN DATA / DAY" value="2.4 TB" />
         </div>
 
-        {/* Network usage chart */}
+        {/* Network usage chart - MOCK, see file header comment. */}
         <SectionCard
           title="Network Usage (24h, MB/s)"
           className="col-span-8"
@@ -107,7 +131,7 @@ function Dashboard() {
           </div>
         </SectionCard>
 
-        {/* Risk distribution */}
+        {/* Risk distribution - MOCK, see file header comment. */}
         <SectionCard title="Risk Distribution" className="col-span-4">
           <div className="h-60 relative">
             <ResponsiveContainer width="100%" height="100%">
@@ -127,7 +151,7 @@ function Dashboard() {
           </div>
         </SectionCard>
 
-        {/* Recent Events */}
+        {/* Recent Events - MOCK, see file header comment. */}
         <SectionCard
           title="Recent Events"
           className="col-span-8"
@@ -162,17 +186,23 @@ function Dashboard() {
           </table>
         </SectionCard>
 
-        {/* System health */}
+        {/* System health - MOCK (LAN HEARTBEAT OK reuses the real total
+            below it would be nice to wire, but CPU/MEM/STORAGE readings
+            need a metrics endpoint that doesn't exist yet). */}
         <SectionCard title="System Health" className="col-span-4">
           <div className="space-y-4">
             <Health label="CPU CORE LOAD" right="42%" value={42} />
             <Health label="MEMORY UTILIZATION" right="12.4 GB" value={55} />
             <Health label="STORAGE" right="92% CRITICAL" value={92} accent />
-            <Health label="LAN HEARTBEAT OK" right="142/142" value={100} />
+            <Health
+              label="LAN HEARTBEAT OK"
+              right={endpointsLoading ? "—" : `${online}/${total}`}
+              value={total > 0 ? Math.round((online / total) * 100) : 100}
+            />
           </div>
         </SectionCard>
 
-        {/* CPU / RAM trend */}
+        {/* CPU / RAM trend - MOCK, see file header comment. */}
         <SectionCard title="CPU & Memory Trend (1h)" className="col-span-8">
           <div className="h-52">
             <ResponsiveContainer width="100%" height="100%">

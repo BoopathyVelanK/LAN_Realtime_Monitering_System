@@ -1,54 +1,98 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, SeverityBadge } from "@/components/AppShell";
-import { CheckCircle2, AlertTriangle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { useAlerts, useAcknowledgeAlert } from "@/api/queries";
 
 export const Route = createFileRoute("/alerts")({
   head: () => ({ meta: [{ title: "SecureSOC — Alerts" }] }),
   component: AlertsPage,
 });
 
-const alerts = [
-  { ts: "2025-10-24 14:02:11", sev: "CRITICAL" as const, host: "LAB-PC-17", user: "student_42", desc: "Unauthorized USB inserted (SanDisk Cruzer 16GB)", status: "OPEN" },
-  { ts: "2025-10-24 13:58:44", sev: "HIGH" as const, host: "LAB-PC-22", user: "student_11", desc: "Idle exceeded 30 minutes (critical idle)", status: "OPEN" },
-  { ts: "2025-10-24 13:45:01", sev: "CRITICAL" as const, host: "FAC-DC-MAIN", user: "admin_root", desc: "Lateral movement indicator across LAN segment", status: "ACK" },
-  { ts: "2025-10-24 13:20:12", sev: "MEDIUM" as const, host: "LAB-PC-04", user: "student_07", desc: "VPN process detected: WireGuard", status: "OPEN" },
-  { ts: "2025-10-24 12:48:21", sev: "HIGH" as const, host: "LAB-PC-09", user: "student_88", desc: "Excessive upload — 412 MB in 10 minutes", status: "ACK" },
-  { ts: "2025-10-24 12:11:19", sev: "CRITICAL" as const, host: "LAB-PC-09", user: "student_88", desc: "Blacklisted application running: uTorrent.exe", status: "OPEN" },
-  { ts: "2025-10-24 11:02:43", sev: "WARNING" as const, host: "LAB-PC-31", user: "—", desc: "Offline > 1h — LAN sync pending", status: "OPEN" },
-];
-
+// MOCK DATA (Phase 4A audit): no AlertController/Alert entity exists on
+// the backend yet (Phase 4 detection engine). useAlerts() below always
+// resolves from mocks/data.ts regardless of VITE_USE_MOCKS - see
+// dashboardApi.ts's header comment. This page used to keep its own
+// separate hardcoded array; it now goes through the same query layer as
+// every other page so there's a single mock data source, not two.
 function AlertsPage() {
+  const { data: alerts, isLoading, isError } = useAlerts();
+  const acknowledge = useAcknowledgeAlert();
+  const rows = alerts ?? [];
+
+  const open = rows.filter((a) => a.status === "OPEN").length;
+  const acknowledged = rows.filter((a) => a.status === "ACKNOWLEDGED").length;
+  const resolved = rows.filter((a) => a.status === "RESOLVED").length;
+
   return (
     <AppShell title="Alert Center" subtitle="ACTIVE NOTIFICATIONS">
       <div className="px-8 pb-8">
         <div className="grid grid-cols-4 gap-4 mb-5">
-          {[{l:"OPEN",v:"5",d:true},{l:"ACKNOWLEDGED",v:"2"},{l:"RESOLVED 24H",v:"18"},{l:"AVG RESPONSE",v:"4m 12s"}].map((c,i)=>(
-            <div key={i} className="bg-card border border-border rounded-lg p-5">
-              <div className="text-[10px] tracking-widest text-muted-foreground font-bold">{c.l}</div>
-              <div className={`text-3xl font-bold mt-3 ${c.d?"text-critical":""}`}>{c.v}</div>
-            </div>
-          ))}
+          <div className="bg-card border border-border rounded-lg p-5">
+            <div className="text-[10px] tracking-widest text-muted-foreground font-bold">OPEN</div>
+            <div className="text-3xl font-bold mt-3 text-critical">{isLoading ? "—" : open}</div>
+          </div>
+          <div className="bg-card border border-border rounded-lg p-5">
+            <div className="text-[10px] tracking-widest text-muted-foreground font-bold">ACKNOWLEDGED</div>
+            <div className="text-3xl font-bold mt-3">{isLoading ? "—" : acknowledged}</div>
+          </div>
+          <div className="bg-card border border-border rounded-lg p-5">
+            <div className="text-[10px] tracking-widest text-muted-foreground font-bold">RESOLVED</div>
+            <div className="text-3xl font-bold mt-3">{isLoading ? "—" : resolved}</div>
+          </div>
+          {/* No timestamped acknowledge/resolve audit trail to compute a
+              real average from yet - mock stat, marked here explicitly. */}
+          <div className="bg-card border border-border rounded-lg p-5">
+            <div className="text-[10px] tracking-widest text-muted-foreground font-bold">AVG RESPONSE (MOCK)</div>
+            <div className="text-3xl font-bold mt-3">4m 12s</div>
+          </div>
         </div>
+
         <div className="bg-card border border-border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-[10px] tracking-widest text-muted-foreground border-b border-border bg-muted/40">
-              <th className="px-5 py-3 font-bold">TIMESTAMP</th><th className="px-5 py-3 font-bold">SEVERITY</th><th className="px-5 py-3 font-bold">HOST</th><th className="px-5 py-3 font-bold">USER</th><th className="px-5 py-3 font-bold">DESCRIPTION</th><th className="px-5 py-3 font-bold">STATUS</th><th className="px-5 py-3 font-bold">ACTION</th>
-            </tr></thead>
+            <thead>
+              <tr className="text-left text-[10px] tracking-widest text-muted-foreground border-b border-border bg-muted/40">
+                <th className="px-5 py-3 font-bold">TIMESTAMP</th>
+                <th className="px-5 py-3 font-bold">SEVERITY</th>
+                <th className="px-5 py-3 font-bold">HOST</th>
+                <th className="px-5 py-3 font-bold">DESCRIPTION</th>
+                <th className="px-5 py-3 font-bold">STATUS</th>
+                <th className="px-5 py-3 font-bold">ACTION</th>
+              </tr>
+            </thead>
             <tbody>
-              {alerts.map((a,i)=>(
-                <tr key={i} className="border-b border-border last:border-0">
-                  <td className="px-5 py-3 text-xs">{a.ts}</td>
-                  <td className="px-5 py-3"><SeverityBadge s={a.sev} /></td>
-                  <td className="px-5 py-3 text-xs font-bold">{a.host}</td>
-                  <td className="px-5 py-3 text-xs">{a.user}</td>
-                  <td className="px-5 py-3 text-xs">{a.desc}</td>
+              {isLoading && (
+                <tr><td colSpan={6} className="px-5 py-8 text-center text-xs text-muted-foreground">Loading alerts…</td></tr>
+              )}
+              {isError && (
+                <tr><td colSpan={6} className="px-5 py-8 text-center text-xs text-critical">Could not load alerts.</td></tr>
+              )}
+              {!isLoading && !isError && rows.length === 0 && (
+                <tr><td colSpan={6} className="px-5 py-8 text-center text-xs text-muted-foreground">No alerts.</td></tr>
+              )}
+              {rows.map((a) => (
+                <tr key={a.id} className="border-b border-border last:border-0">
+                  <td className="px-5 py-3 text-xs">{new Date(a.createdAt).toLocaleString()}</td>
+                  <td className="px-5 py-3"><SeverityBadge s={a.severity as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"} /></td>
+                  <td className="px-5 py-3 text-xs font-bold">{a.hostname}</td>
+                  <td className="px-5 py-3 text-xs">{a.title}</td>
                   <td className="px-5 py-3">
-                    {a.status === "ACK"
-                      ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><CheckCircle2 className="w-3.5 h-3.5"/>ACKNOWLEDGED</span>
-                      : <span className="inline-flex items-center gap-1.5 text-xs text-critical font-bold"><AlertTriangle className="w-3.5 h-3.5"/>OPEN</span>}
+                    {a.status === "OPEN" ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-critical font-bold"><AlertTriangle className="w-3.5 h-3.5" />OPEN</span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><CheckCircle2 className="w-3.5 h-3.5" />{a.status}</span>
+                    )}
                   </td>
                   <td className="px-5 py-3">
-                    {a.status === "OPEN" && <button className="text-[10px] font-bold tracking-wider bg-primary text-primary-foreground px-3 py-1.5 rounded">ACKNOWLEDGE</button>}
+                    {a.status === "OPEN" && (
+                      <button
+                        onClick={() => acknowledge.mutate(a.id)}
+                        disabled={acknowledge.isPending}
+                        className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wider bg-primary text-primary-foreground px-3 py-1.5 rounded disabled:opacity-60"
+                      >
+                        {acknowledge.isPending && acknowledge.variables === a.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                        ACKNOWLEDGE
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
