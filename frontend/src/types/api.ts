@@ -1,7 +1,22 @@
 /**
  * These types mirror the backend's actual DTO records field-for-field
- * (com.securesoc.dto.*) — not invented shapes. Keep them in sync if the
- * backend DTOs change.
+ * (com.securesoc.dto.*) where a backend DTO exists. Keep them in sync if
+ * the backend DTOs change.
+ *
+ * Backend coverage as of the Phase 4A audit (securesoc-backend/src/main/
+ * java/com/securesoc/dto/ + controller/):
+ *   - AuthResponse, LoginRequest, EndpointSummaryResponse: real backend
+ *     DTOs exist and are wired to real controllers (AuthController,
+ *     EndpointController).
+ *   - AlertResponse, RiskScoreResponse, EndpointStatusEvent: CONTRACT-FIRST
+ *     types only - there is no AlertController, RiskController, Alert
+ *     entity, risk-scoring engine, or WebSocket push layer on the backend
+ *     yet (that's Phase 4's detection engine and Phase 5's real-time
+ *     layer). These shapes exist so the frontend and future backend agree
+ *     on the contract in advance; nothing currently returns this data
+ *     from a real endpoint. See frontend/src/api/dashboardApi.ts, which
+ *     deliberately always serves these from mocks/data.ts regardless of
+ *     VITE_USE_MOCKS until that backend work lands.
  */
 
 export interface AuthResponse {
@@ -39,7 +54,9 @@ export interface EndpointSummaryResponse {
 }
 
 /** Pushed over /topic/endpoints/status — deliberately smaller than
- * EndpointSummaryResponse, see backend EndpointStatusEvent Javadoc. */
+ * EndpointSummaryResponse, see backend EndpointStatusEvent Javadoc.
+ * CONTRACT-FIRST: no WebSocket push layer exists on the backend yet
+ * (Phase 5) - see header comment above. */
 export interface EndpointStatusEvent {
   endpointId: string;
   hostname: string;
@@ -50,6 +67,8 @@ export interface EndpointStatusEvent {
 export type AlertSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
 export type AlertStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | string;
 
+/** CONTRACT-FIRST: no backend AlertController/Alert entity exists yet -
+ * see header comment above. */
 export interface AlertResponse {
   id: string;
   endpointId: string;
@@ -68,6 +87,8 @@ export interface AlertResponse {
 
 export type RiskLevel = 'SAFE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
 
+/** CONTRACT-FIRST: no backend RiskController/risk-scoring engine exists
+ * yet - see header comment above. */
 export interface RiskScoreResponse {
   endpointId: string;
   score: number;
