@@ -3,11 +3,13 @@
  * (com.securesoc.dto.*) where a backend DTO exists. Keep them in sync if
  * the backend DTOs change.
  *
- * Backend coverage as of the Phase 4A audit (securesoc-backend/src/main/
+ * Backend coverage as of the Phase 4B audit (securesoc-backend/src/main/
  * java/com/securesoc/dto/ + controller/):
- *   - AuthResponse, LoginRequest, EndpointSummaryResponse: real backend
- *     DTOs exist and are wired to real controllers (AuthController,
- *     EndpointController).
+ *   - AuthResponse, LoginRequest, EndpointSummaryResponse, PageResponse,
+ *     and the 8 monitoring event *EventResponse / RunningAppSnapshotResponse
+ *     types below: real backend DTOs exist and are wired to real
+ *     controllers (AuthController, EndpointController,
+ *     MonitoringController's GET endpoints).
  *   - AlertResponse, RiskScoreResponse, EndpointStatusEvent: CONTRACT-FIRST
  *     types only - there is no AlertController, RiskController, Alert
  *     entity, risk-scoring engine, or WebSocket push layer on the backend
@@ -102,4 +104,111 @@ export interface ApiError {
   error: string;
   message: string;
   path: string;
+}
+
+// -------------------------------------------------------------------
+// Phase 4B — monitoring read endpoints (GET /monitoring/**). Every list
+// endpoint returns this same envelope shape (mirrors backend
+// com.securesoc.dto.PageResponse<T> exactly).
+// -------------------------------------------------------------------
+
+export interface PageResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+/** Common query params accepted by every monitoring list endpoint. */
+export interface MonitoringListParams {
+  endpointId?: string;
+  page?: number;
+  size?: number;
+}
+
+export interface LoginEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  osUsername: string;
+  sessionId: string | null;
+  loginTime: string;
+  receivedAt: string;
+}
+
+export interface LogoutEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  osUsername: string;
+  sessionId: string | null;
+  logoutTime: string;
+  receivedAt: string;
+}
+
+export type UsbEventAction = 'CONNECTED' | 'DISCONNECTED' | null;
+
+export interface UsbEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  deviceName: string | null;
+  deviceId: string | null;
+  vendorId: string | null;
+  productId: string | null;
+  action: UsbEventAction;
+  eventTime: string;
+  receivedAt: string;
+}
+
+export interface VpnEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  adapterName: string | null;
+  active: boolean;
+  detectedAt: string;
+}
+
+export interface IdleEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  idleSeconds: number;
+  recordedAt: string;
+}
+
+export interface NetworkUsageEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  bytesSent: number;
+  bytesReceived: number;
+  interfaceName: string | null;
+  recordedAt: string;
+}
+
+export interface InternetUsageEventResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  uploadMb: number;
+  downloadMb: number;
+  periodSeconds: number;
+  recordedAt: string;
+}
+
+export interface RunningAppEntry {
+  processName: string | null;
+  windowTitle: string | null;
+  pid: number | null;
+}
+
+export interface RunningAppSnapshotResponse {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  capturedAt: string;
+  apps: RunningAppEntry[];
 }
