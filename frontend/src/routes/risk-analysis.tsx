@@ -7,6 +7,14 @@ export const Route = createFileRoute("/risk-analysis")({
   component: RiskAnalysis,
 });
 
+// MOCK DATA (Phase 4A audit): no detection-rules or risk-scoring backend
+// exists yet (Phase 4 detection engine - no RiskController, no rule
+// engine, no Sigma/threshold rule storage). Note this page's data model
+// (per-rule weight/hit-count, one aggregate "network risk index") is also
+// a different shape than RiskScoreResponse (per-endpoint score/level) in
+// types/api.ts - even once a risk backend exists, this page may need a
+// dedicated rules-summary endpoint rather than useRiskScores(). Left
+// as-is rather than force-fitting the wrong hook onto the wrong UI.
 const rules = [
   { rule: "Unauthorized USB inserted", weight: 30, hits: 4, level: "CRITICAL" as const },
   { rule: "VPN active during exam window", weight: 25, hits: 2, level: "HIGH" as const },
