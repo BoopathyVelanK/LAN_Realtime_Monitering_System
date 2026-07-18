@@ -2,12 +2,22 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell, SectionCard, StatusDot, SeverityBadge, Meter, KpiGrid } from "@/components/AppShell";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { ArrowLeft, Cpu, HardDrive, MemoryStick, Wifi, Usb, ShieldOff } from "lucide-react";
+import { useEndpoints } from "@/api/queries";
+import { mapEndpointStatus, formatRelativeTime } from "@/lib/endpointFormat";
 
 export const Route = createFileRoute("/endpoints/$id")({
   head: ({ params }) => ({ meta: [{ title: `SecureSOC — ${params.id}` }] }),
   component: EndpointDetail,
 });
 
+// MOCK DATA below (cpuSeries, processes, timeline, and the CPU/RAM/DISK/
+// NET/RISK metrics in the hero cards) - the backend has no per-endpoint
+// process list, live resource-usage history, or risk-scoring endpoint yet
+// (Phase 4 detection engine / a future per-endpoint metrics endpoint).
+// Only the identity block (hostname, OS, IP/MAC, status, heartbeat) below
+// is wired to real data, reusing the endpoint list already fetched by
+// useEndpoints() - see EndpointsPage in routes/endpoints.tsx, which is
+// the same query (TanStack Query dedupes this, no extra network call).
 const cpuSeries = Array.from({ length: 30 }, (_, i) => ({
   t: `${i}m`,
   cpu: 20 + Math.round(Math.sin(i / 3) * 15 + Math.random() * 25),
@@ -32,6 +42,16 @@ const timeline = [
 
 function EndpointDetail() {
   const { id } = Route.useParams();
+  const { data: endpoints } = useEndpoints();
+  // Route param is the hostname (see the Link in endpoints.tsx: params={{ id: e.hostname }}).
+  const endpoint = endpoints?.find((e) => e.hostname === id);
+
+  const specLine = endpoint
+    ? [endpoint.osName, endpoint.osVersion, endpoint.cpuInfo, endpoint.ramMb ? `${(endpoint.ramMb / 1024).toFixed(0)} GB RAM` : null, endpoint.diskGb ? `${endpoint.diskGb} GB disk` : null]
+        .filter(Boolean)
+        .join(" · ")
+    : "Loading system specs…";
+
   return (
     <AppShell title={id} subtitle="ENDPOINT DETAIL">
       <div className="px-8 pb-8">
@@ -45,10 +65,17 @@ function EndpointDetail() {
               <div>
                 <div className="text-[10px] tracking-widest text-muted-foreground font-bold">SYSTEM OVERVIEW</div>
                 <div className="text-2xl font-bold mt-2" style={{ fontFamily: "Georgia, serif" }}>{id}</div>
-                <div className="text-xs text-muted-foreground mt-1">Windows 11 Pro 23H2 · Intel i7-12700 · 16 GB DDR4 · 512 GB NVMe</div>
+                <div className="text-xs text-muted-foreground mt-1">{specLine}</div>
+                {endpoint && (
+                  <div className="text-[11px] text-muted-foreground mt-1">
+                    {endpoint.ipAddress} · {endpoint.macAddress} · heartbeat {formatRelativeTime(endpoint.lastHeartbeatAt)}
+                  </div>
+                )}
               </div>
-              <StatusDot status="online" />
+              <StatusDot status={endpoint ? mapEndpointStatus(endpoint.status) : "offline"} />
             </div>
+            {/* CPU/RAM/DISK/NET below are illustrative - no live resource
+                metrics endpoint exists yet, see file header comment. */}
             <div className="grid grid-cols-4 gap-6 mt-6">
               <Metric icon={<Cpu className="w-4 h-4" />} label="CPU" value="42%" />
               <Metric icon={<MemoryStick className="w-4 h-4" />} label="RAM" value="9.2 / 16 GB" />
@@ -56,6 +83,7 @@ function EndpointDetail() {
               <Metric icon={<Wifi className="w-4 h-4" />} label="NET" value="184 MB/s" />
             </div>
           </div>
+          {/* Risk score - mock, no risk-scoring engine yet (Phase 4). */}
           <div className="col-span-4 bg-primary text-primary-foreground rounded-lg p-6">
             <div className="text-[10px] tracking-widest opacity-80 font-bold">RISK SCORE</div>
             <div className="text-6xl font-bold mt-3">78</div>
