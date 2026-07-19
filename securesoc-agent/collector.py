@@ -203,11 +203,47 @@ class NetworkUsageTracker:
         }
 
 
-def get_usb_devices_stub() -> list[dict]:
-    """USB insert/remove detection needs OS-level hooks (WMI event
-    subscriptions on Windows via pywin32). That's real deployment work
-    against actual Windows hardware, not something testable in this
-    sandbox — so this Phase 3 build ships the ingest endpoint
-    (POST /monitoring/usb) and this stub, ready to be wired to real WMI
-    events when the agent runs on an actual Windows lab PC."""
-    return []
+def get_usb_devices() -> list[dict]:
+    """Best-effort snapshot of currently-mounted removable drives, via
+    psutil.disk_partitions() (whose Windows backend tags each partition's
+    `opts` with a drive-type keyword — 'removable', 'fixed', 'cdrom', etc. —
+    read from GetDriveType()).
+
+    This does NOT hook real OS-level hotplug events — that needs WMI event
+    subscriptions via pywin32 against actual Windows hardware, which isn't
+    available in this cross-platform sandbox build (same limitation noted
+    for window_title/idle_seconds above). Instead, agent.py calls this once
+    per monitoring cycle and diffs successive snapshots to synthesize
+    CONNECTED/DISCONNECTED events — this covers the common case (USB flash
+    drives showing up/disappearing) without OS hooks, at two known costs:
+    a drive already mounted before the agent started won't be seen until
+    it's unplugged and replugged, and this can't distinguish "USB" from
+    other removable media psutil reports the same way. Swap in real WMI
+    hotplug events for exact insert/remove timing once this runs on real
+    Windows lab hardware.
+
+    Each dict: deviceId (the diff key — mount/device path, e.g. 'E:\\\\' or
+    '/media/usb0'), deviceName (mountpoint), vendorId/productId (always
+    None — psutil can't read these; they'd come from the WMI event payload
+    in a future upgrade), matching UsbEventRequest's shape minus 'action'
+    (agent.py fills that in per event: CONNECTED or DISCONNECTED).
+    """
+    devices = []
+    try:
+        for part in psutil.disk_partitions(all=False):
+            opts = (part.opts or "").lower()
+            if "removable" not in opts:
+                continue
+            devices.append({
+                "deviceId": part.device,
+                "deviceName": part.mountpoint,
+                "vendorId": None,
+                "productId": None,
+            })
+    except Exception:
+        # Never let a platform-specific psutil quirk crash the monitoring
+        # cycle — agent.py's per-collector fault isolation already wraps
+        # this call in its own try/except too, but an empty list here is
+        # itself a safe, well-defined result rather than propagating.
+        pass
+    return devices
