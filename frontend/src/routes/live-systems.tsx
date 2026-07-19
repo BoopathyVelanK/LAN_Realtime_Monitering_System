@@ -1,32 +1,38 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, SeverityBadge, Meter, StatusDot } from "@/components/AppShell";
 import { Search, Filter, RefreshCw } from "lucide-react";
+import { useEndpoints } from "@/api/queries";
+import { mapEndpointStatus, formatRelativeTime } from "@/lib/endpointFormat";
 
 export const Route = createFileRoute("/live-systems")({
   head: () => ({ meta: [{ title: "SecureSOC — Live Systems" }] }),
   component: LiveSystems,
 });
 
-type Sys = {
-  host: string; user: string; status: "online" | "offline" | "idle" | "exam";
-  cpu: number; ram: number; net: string; data: string; vpn: boolean;
-  risk: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; seen: string;
-};
-
-const systems: Sys[] = [
-  { host: "LAB-PC-01", user: "student_01", status: "online", cpu: 32, ram: 48, net: "1.2 MB/s", data: "412 MB", vpn: false, risk: "LOW", seen: "now" },
-  { host: "LAB-PC-04", user: "student_07", status: "online", cpu: 71, ram: 82, net: "8.4 MB/s", data: "1.8 GB", vpn: true,  risk: "MEDIUM", seen: "now" },
-  { host: "LAB-PC-09", user: "student_88", status: "online", cpu: 88, ram: 76, net: "12.1 MB/s", data: "3.2 GB", vpn: false, risk: "HIGH", seen: "now" },
-  { host: "LAB-PC-12", user: "—",         status: "idle",   cpu: 4,  ram: 22, net: "0.0 MB/s", data: "82 MB",  vpn: false, risk: "LOW", seen: "12m" },
-  { host: "LAB-PC-17", user: "student_42", status: "online", cpu: 41, ram: 55, net: "3.1 MB/s", data: "910 MB", vpn: false, risk: "CRITICAL", seen: "now" },
-  { host: "LAB-PC-22", user: "student_11", status: "idle",   cpu: 2,  ram: 18, net: "0.0 MB/s", data: "55 MB",  vpn: false, risk: "MEDIUM", seen: "34m" },
-  { host: "LAB-PC-29", user: "student_45", status: "online", cpu: 19, ram: 34, net: "0.5 MB/s", data: "201 MB", vpn: false, risk: "LOW", seen: "now" },
-  { host: "FAC-DC-MAIN", user: "admin_root", status: "exam", cpu: 12, ram: 28, net: "0.2 MB/s", data: "1.1 GB", vpn: false, risk: "CRITICAL", seen: "now" },
-  { host: "LAB-PC-31", user: "—",         status: "offline", cpu: 0, ram: 0, net: "—",         data: "—",      vpn: false, risk: "MEDIUM", seen: "2h 14m" },
-  { host: "LAB-PC-33", user: "student_19", status: "online", cpu: 26, ram: 51, net: "0.9 MB/s", data: "302 MB", vpn: false, risk: "LOW", seen: "now" },
-];
+// Frontend integration audit finding: this page previously had ZERO real
+// backend wiring and no disclosure comment (unlike every other monitoring
+// page in this app) - a hardcoded array of 10 fake hosts rendered
+// regardless of what was actually registered. HOSTNAME/USER/STATUS/LAST
+// SEEN now come from the same useEndpoints() query as routes/endpoints.tsx
+// (TanStack Query dedupes the request, no extra network call). CPU/RAM/
+// NETWORK/DATA/VPN/RISK stay mock, explicitly marked (MOCK) below, for
+// the same reasons documented in routes/endpoints.tsx's header comment:
+// no live resource-usage %, no per-endpoint network/VPN read endpoint,
+// and no risk-scoring engine exist on the backend yet.
+function mockMetricsFor(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const cpu = h % 90;
+  const ram = (h >> 3) % 90;
+  const risk = (["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const)[h % 4];
+  const vpn = h % 5 === 0;
+  return { cpu, ram, risk, vpn, net: `${((h % 120) / 10).toFixed(1)} MB/s`, data: `${(h % 4000) + 20} MB` };
+}
 
 function LiveSystems() {
+  const { data: endpoints, isLoading, isError } = useEndpoints();
+  const rows = endpoints ?? [];
+
   return (
     <AppShell title="Live Systems" subtitle="ENDPOINTS · REAL-TIME">
       <div className="px-8 pb-8">
@@ -48,30 +54,42 @@ function LiveSystems() {
                 <th className="px-5 py-3 font-bold">HOSTNAME</th>
                 <th className="px-5 py-3 font-bold">USER</th>
                 <th className="px-5 py-3 font-bold">STATUS</th>
-                <th className="px-5 py-3 font-bold">CPU</th>
-                <th className="px-5 py-3 font-bold">RAM</th>
-                <th className="px-5 py-3 font-bold">NETWORK</th>
-                <th className="px-5 py-3 font-bold">DATA</th>
-                <th className="px-5 py-3 font-bold">VPN</th>
-                <th className="px-5 py-3 font-bold">RISK</th>
+                <th className="px-5 py-3 font-bold">CPU (MOCK)</th>
+                <th className="px-5 py-3 font-bold">RAM (MOCK)</th>
+                <th className="px-5 py-3 font-bold">NETWORK (MOCK)</th>
+                <th className="px-5 py-3 font-bold">DATA (MOCK)</th>
+                <th className="px-5 py-3 font-bold">VPN (MOCK)</th>
+                <th className="px-5 py-3 font-bold">RISK (MOCK)</th>
                 <th className="px-5 py-3 font-bold">LAST SEEN</th>
               </tr>
             </thead>
             <tbody>
-              {systems.map((s) => (
-                <tr key={s.host} className="border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer">
-                  <td className="px-5 py-3 text-xs font-bold">{s.host}</td>
-                  <td className="px-5 py-3 text-xs">{s.user}</td>
-                  <td className="px-5 py-3"><StatusDot status={s.status} /></td>
-                  <td className="px-5 py-3 min-w-[120px]"><div className="flex items-center gap-2"><span className="text-xs w-8">{s.cpu}%</span><Meter value={s.cpu} accent={s.cpu > 80} /></div></td>
-                  <td className="px-5 py-3 min-w-[120px]"><div className="flex items-center gap-2"><span className="text-xs w-8">{s.ram}%</span><Meter value={s.ram} accent={s.ram > 80} /></div></td>
-                  <td className="px-5 py-3 text-xs">{s.net}</td>
-                  <td className="px-5 py-3 text-xs">{s.data}</td>
-                  <td className="px-5 py-3 text-xs">{s.vpn ? <span className="text-critical font-bold">ACTIVE</span> : <span className="text-muted-foreground">—</span>}</td>
-                  <td className="px-5 py-3"><SeverityBadge s={s.risk} /></td>
-                  <td className="px-5 py-3 text-xs text-muted-foreground">{s.seen}</td>
-                </tr>
-              ))}
+              {isLoading && (
+                <tr><td colSpan={10} className="px-5 py-8 text-center text-xs text-muted-foreground">Loading endpoints…</td></tr>
+              )}
+              {isError && (
+                <tr><td colSpan={10} className="px-5 py-8 text-center text-xs text-critical">Could not load endpoints from the backend.</td></tr>
+              )}
+              {!isLoading && !isError && rows.length === 0 && (
+                <tr><td colSpan={10} className="px-5 py-8 text-center text-xs text-muted-foreground">No endpoints have registered yet.</td></tr>
+              )}
+              {rows.map((e) => {
+                const m = mockMetricsFor(e.id);
+                return (
+                  <tr key={e.id} className="border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer">
+                    <td className="px-5 py-3 text-xs font-bold">{e.hostname}</td>
+                    <td className="px-5 py-3 text-xs text-muted-foreground">—</td>
+                    <td className="px-5 py-3"><StatusDot status={mapEndpointStatus(e.status)} /></td>
+                    <td className="px-5 py-3 min-w-[120px]"><div className="flex items-center gap-2"><span className="text-xs w-8">{m.cpu}%</span><Meter value={m.cpu} accent={m.cpu > 80} /></div></td>
+                    <td className="px-5 py-3 min-w-[120px]"><div className="flex items-center gap-2"><span className="text-xs w-8">{m.ram}%</span><Meter value={m.ram} accent={m.ram > 80} /></div></td>
+                    <td className="px-5 py-3 text-xs">{m.net}</td>
+                    <td className="px-5 py-3 text-xs">{m.data}</td>
+                    <td className="px-5 py-3 text-xs">{m.vpn ? <span className="text-critical font-bold">ACTIVE</span> : <span className="text-muted-foreground">—</span>}</td>
+                    <td className="px-5 py-3"><SeverityBadge s={m.risk} /></td>
+                    <td className="px-5 py-3 text-xs text-muted-foreground">{formatRelativeTime(e.lastHeartbeatAt)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
