@@ -386,6 +386,13 @@ class SecureSocAgent:
         self.network_tracker = collector.NetworkUsageTracker()
         self._last_monitoring_cycle = 0.0
         self._last_known_user = None
+        # Keyed by deviceId (see collector.get_usb_devices) — last snapshot
+        # of mounted removable drives, used to diff CONNECTED/DISCONNECTED
+        # events each monitoring cycle. Starts empty: whatever's already
+        # mounted when the agent first starts is only reported once it's
+        # unplugged and replugged (documented limitation — see
+        # collector.get_usb_devices docstring).
+        self._last_usb_devices: dict = {}
 
         # --- Offline event queue (monitoring events only — see offline_queue.py docstring) ---
         queue_db_file = config.get("agent", "offline_queue_db_file", fallback="offline_queue.db")
@@ -676,11 +683,33 @@ class SecureSocAgent:
             # loop straight into the next batch (the "commit -> next 100"
             # flow) rather than waiting for the next backoff interval.
 
+    def _collect_usb_events(self) -> "list[dict]":
+        """Diffs the current removable-drive snapshot (collector.get_usb_
+        devices()) against the last one seen and returns one CONNECTED/
+        DISCONNECTED payload per device that appeared/disappeared since
+        the previous monitoring cycle — each already shaped to match
+        UsbEventRequest (deviceName, deviceId, vendorId, productId,
+        action). Updates self._last_usb_devices as a side effect so the
+        next cycle diffs against this one."""
+        current = {device["deviceId"]: device for device in collector.get_usb_devices()}
+        previous = self._last_usb_devices
+
+        events = []
+        for device_id, device in current.items():
+            if device_id not in previous:
+                events.append({**device, "action": "CONNECTED"})
+        for device_id, device in previous.items():
+            if device_id not in current:
+                events.append({**device, "action": "DISCONNECTED"})
+
+        self._last_usb_devices = current
+        return events
+
     def run_monitoring_cycle(self) -> bool:
         """Called every monitoring_interval_seconds — sends the lower-frequency
-        signals (running apps, network/internet usage, VPN status, idle time).
-        Login/logout are event-driven (see on_startup/on_shutdown) rather than
-        polled here."""
+        signals (running apps, USB connect/disconnect, network/internet usage,
+        VPN status, idle time). Login/logout are event-driven (see
+        on_startup/on_shutdown) rather than polled here."""
         ok = True
 
         # Running applications snapshot
@@ -691,6 +720,16 @@ class SecureSocAgent:
             apps = None
         if apps:
             ok &= self._post_monitoring("running-apps", {"applications": apps})
+
+        # USB devices — one event per drive that connected/disconnected
+        # since the last cycle (see _collect_usb_events / collector.get_usb_devices)
+        try:
+            usb_events = self._collect_usb_events()
+        except Exception:
+            self.log.error("Collector 'get_usb_devices' failed — skipping USB data for this cycle.", exc_info=True)
+            usb_events = []
+        for event in usb_events:
+            ok &= self._post_monitoring("usb", event)
 
         # Network + internet usage (delta since last sample)
         try:
