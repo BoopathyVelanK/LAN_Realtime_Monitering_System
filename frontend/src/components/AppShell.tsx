@@ -7,6 +7,8 @@ import {
   ShieldCheck, FileWarning, Archive, HelpCircle, LogOut, Globe, UserSquare2, Boxes,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthContext";
+import { useEndpoints, useAlerts } from "@/api/queries";
+import { useLiveFeed } from "@/ws/useLiveFeed";
 
 type NavItem = { to: string; label: string; icon: any; action?: "sign-out" };
 
@@ -86,6 +88,27 @@ export function AppShell({
     }
   }, [isInitializing, isAuthenticated, navigate]);
 
+  // Real data for the top bar / footer status strip below - these used to
+  // be hardcoded (frontend integration audit): WSS/endpoint-count/alert
+  // banner now come from the same hooks every other page already uses.
+  // NOTE: because AppShell remounts on every route change (it's rendered
+  // per-page, not once at the router root), useLiveFeed's subscription
+  // reconnects on each navigation rather than staying open for the whole
+  // session. That's a real inefficiency, not a correctness bug (the mock/
+  // real client both reconnect quickly) - moving this to __root.tsx as a
+  // single app-wide provider would fix it properly; flagged in the audit
+  // doc as a follow-up rather than done here to avoid restructuring the
+  // routing/provider layout in the same change as a status-bar fix.
+  const { data: endpoints } = useEndpoints();
+  const totalEndpoints = endpoints?.length ?? 0;
+  const onlineEndpoints = endpoints?.filter((e) => e.status === "ONLINE").length ?? 0;
+  const { connected } = useLiveFeed();
+  // Alerts are still MOCK ONLY (no backend AlertController yet - see
+  // dashboardApi.ts header) but at least this reflects that mock's actual
+  // current state instead of a string that can never change.
+  const { data: alerts } = useAlerts();
+  const latestOpenAlert = alerts?.find((a) => a.status === "OPEN");
+
   // Don't flash protected content while redirecting or before we know
   // whether a session exists.
   if (isInitializing || !isAuthenticated) {
@@ -114,10 +137,10 @@ export function AppShell({
             </div>
           </div>
           <div className="hidden md:flex items-center gap-2 text-xs border border-border rounded-md px-3 py-2 bg-card">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse inline-block" />
+            <span className={`w-2 h-2 rounded-full inline-block ${connected ? "bg-primary animate-pulse" : "bg-muted-foreground"}`} />
             <span className="font-semibold">SOC-NODE: SRV-01</span>
             <span className="text-muted-foreground mx-2">|</span>
-            <span>WSS: CONNECTED</span>
+            <span>{connected ? "WSS: CONNECTED" : "WSS: OFFLINE"}</span>
           </div>
           <div className="hidden lg:flex items-center gap-3 text-muted-foreground">
             <Cpu className="w-5 h-5" />
@@ -192,7 +215,7 @@ export function AppShell({
 
           <div className="p-6 border-t border-border flex items-center justify-between text-xs">
             <span className="font-bold tracking-wider text-muted-foreground">LAN SYNC ACTIVE</span>
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            <span className={`w-2 h-2 rounded-full ${connected ? "bg-primary animate-pulse" : "bg-muted-foreground"}`} />
           </div>
         </aside>
 
@@ -207,15 +230,28 @@ export function AppShell({
         </main>
       </div>
 
-      {/* Footer */}
+      {/* Footer - was a permanently-fixed fake "UNAUTHORIZED USB DETECTED
+          ON LAB-PC-17" banner + hardcoded "142/142"/uptime strings
+          regardless of real state (frontend integration audit finding).
+          Endpoint count is now real (useEndpoints, same as every other
+          page). The alert banner reflects the mock alert feed's actual
+          current state instead of one fixed string - still MOCK data
+          (no backend AlertController yet, see dashboardApi.ts), but at
+          least an honest reflection of that mock rather than a permanent
+          false claim. Uptime removed outright: there is no backend
+          concept of process/service uptime exposed anywhere to source it
+          from. */}
       <footer className="border-t border-border bg-background text-[11px] flex items-center">
-        <div className="bg-primary text-primary-foreground px-4 py-2 font-bold tracking-wider">
-          ALERT: UNAUTHORIZED USB DETECTED ON LAB-PC-17
-        </div>
+        {latestOpenAlert ? (
+          <div className="bg-primary text-primary-foreground px-4 py-2 font-bold tracking-wider">
+            ALERT (MOCK): {latestOpenAlert.title.toUpperCase()} ON {latestOpenAlert.hostname}
+          </div>
+        ) : (
+          <div className="bg-muted px-4 py-2 font-bold tracking-wider text-muted-foreground">NO OPEN ALERTS</div>
+        )}
         <div className="flex-1 flex items-center justify-around text-muted-foreground py-2 px-4 tracking-wider flex-wrap gap-2">
-          <span>LAN ENDPOINTS: 142 / 142</span>
+          <span>LAN ENDPOINTS: {onlineEndpoints} / {totalEndpoints}</span>
           <span>SECURESOC v4.2.0-STABLE</span>
-          <span>UPTIME: 14D 02H 11M</span>
         </div>
       </footer>
     </div>
