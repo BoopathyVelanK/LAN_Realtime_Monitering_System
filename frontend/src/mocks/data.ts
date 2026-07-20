@@ -2,6 +2,7 @@ import type {
   AlertResponse, EndpointSummaryResponse, RiskScoreResponse,
   PageResponse, UsbEventResponse, VpnEventResponse, IdleEventResponse,
   NetworkUsageEventResponse, InternetUsageEventResponse, RunningAppSnapshotResponse,
+  DepartmentResponse, LaboratoryResponse,
 } from '../types/api';
 
 function uuid(seed: string): string {
@@ -241,6 +242,47 @@ export function generateRunningAppSnapshots(endpoints: EndpointSummaryResponse[]
         windowTitle: null,
         pid: 1000 + i * 10 + j,
       })),
+    };
+  });
+}
+
+// -------------------------------------------------------------------
+// Departments / Laboratories mocks - used by dashboardApi.ts only when
+// VITE_USE_MOCKS=true; when false, real data comes from GET /departments
+// and GET /laboratories (DepartmentController/LaboratoryController).
+// Ties into the same LABS constant generateEndpoints() uses, so mock lab
+// endpoint counts here line up with the mock endpoints those labs "own".
+// -------------------------------------------------------------------
+
+const DEPARTMENTS = [
+  { id: uuid('dept-cs'), name: 'Computer Science', code: 'CS' },
+  { id: uuid('dept-ece'), name: 'Electronics & Communication', code: 'ECE' },
+];
+
+// Index into DEPARTMENTS for each entry in LABS, in the same order
+// (Lab A, Lab B -> Computer Science; Lab C -> Electronics & Communication).
+const LAB_DEPARTMENT_INDEX = [0, 0, 1];
+
+export function generateDepartments(): DepartmentResponse[] {
+  return DEPARTMENTS.map((d, di) => ({
+    ...d,
+    laboratoryCount: LAB_DEPARTMENT_INDEX.filter((x) => x === di).length,
+  }));
+}
+
+export function generateLaboratories(endpoints: EndpointSummaryResponse[]): LaboratoryResponse[] {
+  return LABS.map((lab, i) => {
+    const dept = DEPARTMENTS[LAB_DEPARTMENT_INDEX[i]];
+    const labEndpoints = endpoints.filter((e) => e.labId === lab.id);
+    return {
+      id: lab.id,
+      name: lab.name,
+      code: lab.name.replace(/[^A-Za-z]/g, '').slice(0, 5).toUpperCase(),
+      departmentId: dept.id,
+      departmentName: dept.name,
+      capacity: 30,
+      endpointCount: labEndpoints.length,
+      onlineEndpointCount: labEndpoints.filter((e) => e.status === 'ONLINE').length,
     };
   });
 }
