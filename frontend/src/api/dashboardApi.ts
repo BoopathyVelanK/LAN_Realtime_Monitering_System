@@ -4,11 +4,13 @@ import type {
   AlertResponse, EndpointSummaryResponse, RiskScoreResponse, PageResponse,
   MonitoringListParams, UsbEventResponse, VpnEventResponse, IdleEventResponse,
   NetworkUsageEventResponse, InternetUsageEventResponse, RunningAppSnapshotResponse,
+  DepartmentResponse, LaboratoryResponse,
 } from '../types/api';
 import {
   generateAlerts, generateEndpoints, generateRiskScores, paginate,
   generateUsbEvents, generateVpnEvents, generateIdleEvents,
   generateNetworkUsageEvents, generateInternetUsageEvents, generateRunningAppSnapshots,
+  generateDepartments, generateLaboratories,
 } from '../mocks/data';
 
 let mockEndpoints: EndpointSummaryResponse[] | null = null;
@@ -20,6 +22,8 @@ let mockIdleEvents: IdleEventResponse[] | null = null;
 let mockNetworkUsageEvents: NetworkUsageEventResponse[] | null = null;
 let mockInternetUsageEvents: InternetUsageEventResponse[] | null = null;
 let mockRunningAppSnapshots: RunningAppSnapshotResponse[] | null = null;
+let mockDepartments: DepartmentResponse[] | null = null;
+let mockLaboratories: LaboratoryResponse[] | null = null;
 
 function getMockEndpoints() {
   mockEndpoints ??= generateEndpoints();
@@ -57,10 +61,18 @@ function getMockRunningAppSnapshots() {
   mockRunningAppSnapshots ??= generateRunningAppSnapshots(getMockEndpoints());
   return mockRunningAppSnapshots;
 }
+function getMockDepartments() {
+  mockDepartments ??= generateDepartments();
+  return mockDepartments;
+}
+function getMockLaboratories() {
+  mockLaboratories ??= generateLaboratories(getMockEndpoints());
+  return mockLaboratories;
+}
 
 // -----------------------------------------------------------------------
-// Backend coverage (Phase 4A/4B audit, see securesoc-backend/src/main/
-// java/com/securesoc/controller/):
+// Backend coverage (frontend integration audit, see securesoc-backend/src/
+// main/java/com/securesoc/controller/):
 //   - GET /endpoints                EXISTS (EndpointController)
 //   - GET /monitoring/usb           EXISTS (MonitoringController, Phase 4B)
 //   - GET /monitoring/vpn           EXISTS (MonitoringController, Phase 4B)
@@ -71,14 +83,16 @@ function getMockRunningAppSnapshots() {
 //   - GET /monitoring/login, /logout EXIST too (Phase 4B) but no frontend
 //     page consumes them yet - not wrapped here to avoid dead/unused code;
 //     add getLoginEvents/getLogoutEvents here first if a page needs them.
+//   - GET /departments              EXISTS (DepartmentController)
+//   - GET /laboratories             EXISTS (LaboratoryController)
 //   - /alerts, /risk/*              DOES NOT EXIST YET (Phase 4 detection
 //     engine). AlertResponse/RiskScoreResponse in types/api.ts are
 //     contract-first types with nothing behind them.
-// The six monitoring methods below respect USE_MOCKS, same as
-// getEndpoints, since their backend is real. getAlerts/getRiskScore/
-// getAllRiskScores/acknowledgeAlert/resolveAlert do NOT - they always
-// return mock data regardless of USE_MOCKS, since calling httpClient for
-// them would 404 against a real backend.
+// Every method below except getAlerts/getRiskScore/getAllRiskScores/
+// acknowledgeAlert/resolveAlert respects USE_MOCKS, since their backend is
+// real. Those five do NOT - they always return mock data regardless of
+// USE_MOCKS, since calling httpClient for them would 404 against a real
+// backend.
 // -----------------------------------------------------------------------
 
 function buildQuery(params?: MonitoringListParams): string {
@@ -171,6 +185,22 @@ export const dashboardApi = {
           params?.page ?? 0, params?.size ?? 20,
         ))
       : httpClient.get(`/monitoring/running-apps${buildQuery(params)}`).then((r) => r.data),
+
+  // ---------------------------------------------------------------
+  // Departments / Laboratories - real backend, respects USE_MOCKS.
+  // No pagination on either backend endpoint (both return a plain List,
+  // same as getEndpoints), so no buildQuery() needed here.
+  // ---------------------------------------------------------------
+
+  getDepartments: (): Promise<DepartmentResponse[]> =>
+    USE_MOCKS
+      ? Promise.resolve(getMockDepartments())
+      : httpClient.get('/departments').then((r) => r.data),
+
+  getLaboratories: (): Promise<LaboratoryResponse[]> =>
+    USE_MOCKS
+      ? Promise.resolve(getMockLaboratories())
+      : httpClient.get('/laboratories').then((r) => r.data),
 };
 
 function mockUpdateAlertStatus(id: string, status: AlertResponse['status']): Promise<AlertResponse> {
