@@ -23,4 +23,9 @@ export const queryKeys = {
   networkUsageEvents: (params?: MonitoringListParams) => monitoringKey('network-usage', params),
   internetUsageEvents: (params?: MonitoringListParams) => monitoringKey('internet-usage', params),
   runningAppSnapshots: (params?: MonitoringListParams) => monitoringKey('running-apps', params),
+
+  // Departments / Laboratories (GET /departments, GET /laboratories) -
+  // real backend, see dashboardApi.ts.
+  departments: () => ['departments'] as const,
+  laboratories: () => ['laboratories'] as const,
 };
