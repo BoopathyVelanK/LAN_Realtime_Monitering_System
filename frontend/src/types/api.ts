@@ -3,13 +3,14 @@
  * (com.securesoc.dto.*) where a backend DTO exists. Keep them in sync if
  * the backend DTOs change.
  *
- * Backend coverage as of the Phase 4B audit (securesoc-backend/src/main/
- * java/com/securesoc/dto/ + controller/):
+ * Backend coverage as of the frontend integration audit
+ * (securesoc-backend/src/main/java/com/securesoc/dto/ + controller/):
  *   - AuthResponse, LoginRequest, EndpointSummaryResponse, PageResponse,
- *     and the 8 monitoring event *EventResponse / RunningAppSnapshotResponse
- *     types below: real backend DTOs exist and are wired to real
- *     controllers (AuthController, EndpointController,
- *     MonitoringController's GET endpoints).
+ *     the 8 monitoring event *EventResponse / RunningAppSnapshotResponse
+ *     types, and DepartmentResponse/LaboratoryResponse below: real
+ *     backend DTOs exist and are wired to real controllers
+ *     (AuthController, EndpointController, MonitoringController's GET
+ *     endpoints, DepartmentController, LaboratoryController).
  *   - AlertResponse, RiskScoreResponse, EndpointStatusEvent: CONTRACT-FIRST
  *     types only - there is no AlertController, RiskController, Alert
  *     entity, risk-scoring engine, or WebSocket push layer on the backend
@@ -211,4 +212,29 @@ export interface RunningAppSnapshotResponse {
   hostname: string;
   capturedAt: string;
   apps: RunningAppEntry[];
+}
+
+// -------------------------------------------------------------------
+// Departments / Laboratories (GET /departments, GET /laboratories) —
+// mirrors backend com.securesoc.dto.DepartmentResponse /
+// LaboratoryResponse exactly. Read-only; laboratoryCount/endpointCount/
+// onlineEndpointCount are all server-derived, not stored columns.
+// -------------------------------------------------------------------
+
+export interface DepartmentResponse {
+  id: string;
+  name: string;
+  code: string;
+  laboratoryCount: number;
+}
+
+export interface LaboratoryResponse {
+  id: string;
+  name: string;
+  code: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  capacity: number;
+  endpointCount: number;
+  onlineEndpointCount: number;
 }
