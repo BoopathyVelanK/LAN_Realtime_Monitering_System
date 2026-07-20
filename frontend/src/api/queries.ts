@@ -96,3 +96,26 @@ export function useRunningAppSnapshots(params?: MonitoringListParams) {
     refetchInterval: 30_000,
   });
 }
+
+// -----------------------------------------------------------------------
+// Departments / Laboratories. Real backend (DepartmentController/
+// LaboratoryController) when VITE_USE_MOCKS=false, see dashboardApi.ts
+// header. Slower-changing than monitoring feeds (admin data, not device
+// telemetry), so a longer refetch interval than the monitoring hooks.
+// -----------------------------------------------------------------------
+
+export function useDepartments() {
+  return useQuery({
+    queryKey: queryKeys.departments(),
+    queryFn: dashboardApi.getDepartments,
+    refetchInterval: 120_000,
+  });
+}
+
+export function useLaboratories() {
+  return useQuery({
+    queryKey: queryKeys.laboratories(),
+    queryFn: dashboardApi.getLaboratories,
+    refetchInterval: 120_000,
+  });
+}
