@@ -4,6 +4,7 @@ import com.securesoc.dto.EndpointSummaryResponse;
 import com.securesoc.entity.EndpointDevice;
 import com.securesoc.repository.EndpointDeviceRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -16,6 +17,7 @@ public class EndpointService {
         this.endpointDeviceRepository = endpointDeviceRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<EndpointSummaryResponse> listAll() {
         return endpointDeviceRepository.findAll().stream()
             .map(EndpointService::toSummary)
