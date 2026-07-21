@@ -48,6 +48,6 @@ securesoc:
 
 logging:
   level:
-    com.securesoc: DEBUG
-    org.springframework.security: DEBUG
+    com.securesoc: INFO
+    org.springframework.security: INFO
 
