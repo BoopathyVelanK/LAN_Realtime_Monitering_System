@@ -1,6 +1,5 @@
 package com.securesoc.security;
 
-import com.securesoc.entity.EndpointDevice;
 import com.securesoc.repository.EndpointDeviceRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

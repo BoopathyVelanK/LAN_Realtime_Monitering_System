@@ -2,6 +2,8 @@ package com.securesoc.config;
 
 import com.securesoc.security.AgentTokenAuthFilter;
 import com.securesoc.security.JwtAuthenticationFilter;
+import com.securesoc.security.RestAuthenticationEntryPoint;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -26,16 +28,19 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final AgentTokenAuthFilter agentTokenAuthFilter;
+    private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
     private final CorsProperties corsProperties;
 
     public SecurityConfig(
-            JwtAuthenticationFilter jwtAuthenticationFilter,
-            AgentTokenAuthFilter agentTokenAuthFilter,
-            CorsProperties corsProperties
+        JwtAuthenticationFilter jwtAuthenticationFilter,
+        AgentTokenAuthFilter agentTokenAuthFilter,
+        RestAuthenticationEntryPoint restAuthenticationEntryPoint,
+        CorsProperties corsProperties
     ) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.agentTokenAuthFilter = agentTokenAuthFilter;
         this.corsProperties = corsProperties;
+        this.restAuthenticationEntryPoint = restAuthenticationEntryPoint;
     }
 
     @Bean
@@ -61,6 +66,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable) // stateless JWT API, no cookies/session to forge
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex
+                    .authenticationEntryPoint(restAuthenticationEntryPoint)
+                )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/refresh", "/agents/register").permitAll()
                         .requestMatchers("/actuator/health").permitAll()

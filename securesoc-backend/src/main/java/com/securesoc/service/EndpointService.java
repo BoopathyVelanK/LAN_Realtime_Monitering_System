@@ -21,7 +21,9 @@ public class EndpointService {
     public List<EndpointSummaryResponse> listAll() {
         return endpointDeviceRepository.findAll().stream()
             .map(EndpointService::toSummary)
-            .toList();
+            .toList(
+                
+            );
     }
 
     static EndpointSummaryResponse toSummary(EndpointDevice d) {

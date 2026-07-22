@@ -1,10 +1,10 @@
 package com.securesoc.service;
-
 import com.securesoc.dto.LaboratoryResponse;
 import com.securesoc.entity.EndpointDevice;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.LaboratoryRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -18,7 +18,7 @@ public class LaboratoryService {
         this.laboratoryRepository = laboratoryRepository;
         this.endpointDeviceRepository = endpointDeviceRepository;
     }
-
+    @Transactional(readOnly = true)
     public List<LaboratoryResponse> listAll() {
         return laboratoryRepository.findAll().stream()
             .map(lab -> new LaboratoryResponse(
