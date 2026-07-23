@@ -1,1 +1,116 @@
-cGFja2FnZSBjb20uc2VjdXJlc29jLnNlcnZpY2U7CgppbXBvcnQgY29tLnNlY3VyZXNvYy5jb25maWcuQWdlbnRQcm9wZXJ0aWVzOwppbXBvcnQgY29tLnNlY3VyZXNvYy5kdG8uYWdlbnQuQWdlbnRIZWFydGJlYXRSZXF1ZXN0OwppbXBvcnQgY29tLnNlY3VyZXNvYy5kdG8uYWdlbnQuQWdlbnRIZWFydGJlYXRSZXNwb25zZTsKaW1wb3J0IGNvbS5zZWN1cmVzb2MuZHRvLmFnZW50LkFnZW50UmVnaXN0ZXJSZXF1ZXN0OwppbXBvcnQgY29tLnNlY3VyZXNvYy5kdG8uYWdlbnQuQWdlbnRSZWdpc3RlclJlc3BvbnNlOwppbXBvcnQgY29tLnNlY3VyZXNvYy5lbnRpdHkuRW5kcG9pbnREZXZpY2U7CmltcG9ydCBjb20uc2VjdXJlc29jLmV4Y2VwdGlvbi5VbmF1dGhvcml6ZWRFeGNlcHRpb247CmltcG9ydCBjb20uc2VjdXJlc29jLnJlcG9zaXRvcnkuRW5kcG9pbnREZXZpY2VSZXBvc2l0b3J5OwppbXBvcnQgY29tLnNlY3VyZXNvYy5yZXBvc2l0b3J5LkxhYm9yYXRvcnlSZXBvc2l0b3J5OwppbXBvcnQgY29tLnNlY3VyZXNvYy5zZWN1cml0eS5Ub2tlbkhhc2hlcjsKaW1wb3J0IG9yZy5zcHJpbmdmcmFtZXdvcmsuc3RlcmVvdHlwZS5TZXJ2aWNlOwppbXBvcnQgb3JnLnNwcmluZ2ZyYW1ld29yay50cmFuc2FjdGlvbi5hbm5vdGF0aW9uLlRyYW5zYWN0aW9uYWw7CgppbXBvcnQgamF2YS50aW1lLkluc3RhbnQ7CmltcG9ydCBqYXZhLnV0aWwuVVVJRDsKCkBTZXJ2aWNlCnB1YmxpYyBjbGFzcyBBZ2VudFNlcnZpY2UgewoKICAgIHByaXZhdGUgZmluYWwgRW5kcG9pbnREZXZpY2VSZXBvc2l0b3J5IGVuZHBvaW50RGV2aWNlUmVwb3NpdG9yeTsKICAgIHByaXZhdGUgZmluYWwgTGFib3JhdG9yeVJlcG9zaXRvcnkgbGFib3JhdG9yeVJlcG9zaXRvcnk7CiAgICBwcml2YXRlIGZpbmFsIEFnZW50UHJvcGVydGllcyBhZ2VudFByb3BlcnRpZXM7CiAgICBwcml2YXRlIGZpbmFsIEVuZHBvaW50RXZlbnRQdWJsaXNoZXIgZW5kcG9pbnRFdmVudFB1Ymxpc2hlcjsKCiAgICBwdWJsaWMgQWdlbnRTZXJ2aWNlKAogICAgICAgIEVuZHBvaW50RGV2aWNlUmVwb3NpdG9yeSBlbmRwb2ludERldmljZVJlcG9zaXRvcnksCiAgICAgICAgTGFib3JhdG9yeVJlcG9zaXRvcnkgbGFib3JhdG9yeVJlcG9zaXRvcnksCiAgICAgICAgQWdlbnRQcm9wZXJ0aWVzIGFnZW50UHJvcGVydGllcywKICAgICAgICBFbmRwb2ludEV2ZW50UHVibGlzaGVyIGVuZHBvaW50RXZlbnRQdWJsaXNoZXIKICAgICkgewogICAgICAgIHRoaXMuZW5kcG9pbnREZXZpY2VSZXBvc2l0b3J5ID0gZW5kcG9pbnREZXZpY2VSZXBvc2l0b3J5OwogICAgICAgIHRoaXMubGFib3JhdG9yeVJlcG9zaXRvcnkgPSBsYWJvcmF0b3J5UmVwb3NpdG9yeTsKICAgICAgICB0aGlzLmFnZW50UHJvcGVydGllcyA9IGFnZW50UHJvcGVydGllczsKICAgICAgICB0aGlzLmVuZHBvaW50RXZlbnRQdWJsaXNoZXIgPSBlbmRwb2ludEV2ZW50UHVibGlzaGVyOwogICAgfQoKICAgIC8qKgogICAgICogUmVnaXN0cmF0aW9uIGlzIGlkZW1wb3RlbnQgb24gTUFDIGFkZHJlc3M6IGFuIGFnZW50IHRoYXQgYWxyZWFkeSBoYXMKICAgICAqIGEgdmFsaWQgbG9jYWwgc3RhdGUgZmlsZSBuZXZlciBjYWxscyB0aGlzIChzZWUgYWdlbnQucHkncwogICAgICogQWdlbnRTdGF0ZSksIGJ1dCBhIG1hY2hpbmUgcmUtcmVnaXN0ZXJpbmcgYWZ0ZXIgaXRzIHN0YXRlIGZpbGUgd2FzCiAgICAgKiBsb3N0IGdldHMgYSBGUkVTSCB0b2tlbiBpc3N1ZWQgZm9yIHRoZSBTQU1FIGRldmljZSByZWNvcmQgcmF0aGVyCiAgICAgKiB0aGFuIGEgZHVwbGljYXRlIHJvdyAtIHRoZSBvbGQgdG9rZW4gaXMgaW1wbGljaXRseSBpbnZhbGlkYXRlZCBieQogICAgICogYmVpbmcgb3ZlcndyaXR0ZW4uCiAgICAgKi8KICAgIEBUcmFuc2FjdGlvbmFsCiAgICBwdWJsaWMgQWdlbnRSZWdpc3RlclJlc3BvbnNlIHJlZ2lzdGVyKEFnZW50UmVnaXN0ZXJSZXF1ZXN0IHJlcXVlc3QsIFN0cmluZyBwcmVzZW50ZWRTZWNyZXQpIHsKICAgICAgICBpZiAocHJlc2VudGVkU2VjcmV0ID09IG51bGwgfHwgIXByZXNlbnRlZFNlY3JldC5lcXVhbHMoYWdlbnRQcm9wZXJ0aWVzLnJlZ2lzdHJhdGlvblNlY3JldCgpKSkgewogICAgICAgICAgICB0aHJvdyBuZXcgVW5hdXRob3JpemVkRXhjZXB0aW9uKCJJbnZhbGlkIGFnZW50IHJlZ2lzdHJhdGlvbiBzZWNyZXQiKTsKICAgICAgICB9CgogICAgICAgIEVuZHBvaW50RGV2aWNlIGRldmljZSA9IGVuZHBvaW50RGV2aWNlUmVwb3NpdG9yeS5maW5kQnlNYWNBZGRyZXNzKHJlcXVlc3QubWFjQWRkcmVzcygpKQogICAgICAgICAgICAub3JFbHNlR2V0KEVuZHBvaW50RGV2aWNlOjpuZXcpOwoKICAgICAgICBkZXZpY2Uuc2V0SG9zdG5hbWUocmVxdWVzdC5ob3N0bmFtZSgpKTsKICAgICAgICBkZXZpY2Uuc2V0TWFjQWRkcmVzcyhyZXF1ZXN0Lm1hY0FkZHJlc3MoKSk7CiAgICAgICAgZGV2aWNlLnNldElwQWRkcmVzcyhyZXF1ZXN0LmlwQWRkcmVzcygpKTsKICAgICAgICBkZXZpY2Uuc2V0T3NOYW1lKHJlcXVlc3Qub3NOYW1lKCkpOwogICAgICAgIGRldmljZS5zZXRPc1ZlcnNpb24ocmVxdWVzdC5vc1ZlcnNpb24oKSk7CiAgICAgICAgZGV2aWNlLnNldENwdUluZm8ocmVxdWVzdC5jcHVJbmZvKCkpOwogICAgICAgIGRldmljZS5zZXRSYW1NYihyZXF1ZXN0LnJhbU1iKCkpOwogICAgICAgIGRldmljZS5zZXREaXNrR2IocmVxdWVzdC5kaXNrR2IoKSk7CiAgICAgICAgZGV2aWNlLnNldEFnZW50VmVyc2lvbihyZXF1ZXN0LmFnZW50VmVyc2lvbigpKTsKICAgICAgICBkZXZpY2Uuc2V0U3RhdHVzKEVuZHBvaW50RGV2aWNlLlN0YXR1cy5PRkZMSU5FKTsgLy8gYmVjb21lcyBPTkxJTkUgb24gZmlyc3QgaGVhcnRiZWF0CgogICAgICAgIGlmIChyZXF1ZXN0LmxhYklkKCkgIT0gbnVsbCAmJiAhcmVxdWVzdC5sYWJJZCgpLmlzQmxhbmsoKSkgewogICAgICAgICAgICB0cnkgewogICAgICAgICAgICAgICAgVVVJRCBsYWJJZCA9IFVVSUQuZnJvbVN0cmluZyhyZXF1ZXN0LmxhYklkKCkpOwogICAgICAgICAgICAgICAgbGFib3JhdG9yeVJlcG9zaXRvcnkuZmluZEJ5SWQobGFiSWQpLmlmUHJlc2VudChkZXZpY2U6OnNldExhYik7CiAgICAgICAgICAgIH0gY2F0Y2ggKElsbGVnYWxBcmd1bWVudEV4Y2VwdGlvbiBpZ25vcmVkKSB7CiAgICAgICAgICAgICAgICAvLyBOb3QgYSB2YWxpZCBVVUlEIChvciB1bmFzc2lnbmVkKSAtIGRldmljZSBzdGF5cyB1bmFzc2lnbmVkOwogICAgICAgICAgICAgICAgLy8gYW4gYWRtaW4gY2FuIGFzc2lnbiBpdCBhIGxhYiBsYXRlciBmcm9tIHRoZSBJbnZlbnRvcnkgcGFnZS4KICAgICAgICAgICAgfQogICAgICAgIH0KCiAgICAgICAgU3RyaW5nIHJhd1Rva2VuID0gVG9rZW5IYXNoZXIuZ2VuZXJhdGVPcGFxdWVUb2tlbigpOwogICAgICAgIGRldmljZS5zZXRBZ2VudFRva2VuSGFzaChUb2tlbkhhc2hlci5zaGEyNTZIZXgocmF3VG9rZW4pKTsKCiAgICAgICAgRW5kcG9pbnREZXZpY2Ugc2F2ZWQgPSBlbmRwb2ludERldmljZVJlcG9zaXRvcnkuc2F2ZShkZXZpY2UpOwoKICAgICAgICBTdHJpbmcgbWVzc2FnZSA9IGRldmljZS5nZXRMYWIoKSA9PSBudWxsCiAgICAgICAgICAgID8gIlJlZ2lzdGVyZWQuIEVuZHBvaW50IGlzIHVuYXNzaWduZWQgdG8gYSBsYWIgLSBhbiBhZG1pbiBjYW4gYXNzaWduIGl0IGZyb20gSW52ZW50b3J5LiIKICAgICAgICAgICAgOiAiUmVnaXN0ZXJlZCBhbmQgYXNzaWduZWQgdG8gIiArIGRldmljZS5nZXRMYWIoKS5nZXROYW1lKCkgKyAiLiI7CgogICAgICAgIHJldHVybiBuZXcgQWdlbnRSZWdpc3RlclJlc3BvbnNlKHNhdmVkLmdldElkKCksIHJhd1Rva2VuLCAiT0ZGTElORSIsIG1lc3NhZ2UpOwogICAgfQoKICAgIC8qKiBDYWxsZXIgKEFnZW50Q29udHJvbGxlcikgaGFzIGFscmVhZHkgYXV0aGVudGljYXRlZCB0aGUgZGV2aWNlIHZpYQogICAgICogQWdlbnRUb2tlbkF1dGhGaWx0ZXIgYnkgdGhpcyBwb2ludCAtIHRoZSBFbmRwb2ludERldmljZSBwcmluY2lwYWwgaXMKICAgICAqIHBhc3NlZCBzdHJhaWdodCBpbiByYXRoZXIgdGhhbiByZS1yZXNvbHZlZCBmcm9tIHRoZSB0b2tlbi4KICAgICAqCiAgICAgKiBQaGFzZSA2OiBwdWJsaXNoZXMgYW4gRW5kcG9pbnRTdGF0dXNFdmVudCAoc2VlIEVuZHBvaW50RXZlbnRQdWJsaXNoZXIpCiAgICAgKiBvbmx5IHdoZW4gdGhlIGRldmljZSBhY3R1YWxseSB0cmFuc2l0aW9ucyAtIG1vc3QgaGVhcnRiZWF0cyBhcnJpdmUKICAgICAqIHdoaWxlIHRoZSBkZXZpY2UgaXMgYWxyZWFkeSBPTkxJTkUsIGFuZCByZS1wdWJsaXNoaW5nIG9uIGV2ZXJ5IHNpbmdsZQogICAgICogb25lIG9mIHRob3NlICgtIGV2ZXJ5IH4xNXMgcGVyIGRldmljZSBieSBkZWZhdWx0IC0pIHdvdWxkIGZsb29kIHRoZQogICAgICogdG9waWMgZm9yIG5vIGZyb250ZW5kIGJlbmVmaXQuICovCiAgICBAVHJhbnNhY3Rpb25hbAogICAgcHVibGljIEFnZW50SGVhcnRiZWF0UmVzcG9uc2UgaGVhcnRiZWF0KEVuZHBvaW50RGV2aWNlIGRldmljZSwgQWdlbnRIZWFydGJlYXRSZXF1ZXN0IHJlcXVlc3QpIHsKICAgICAgICBFbmRwb2ludERldmljZS5TdGF0dXMgcHJldmlvdXNTdGF0dXMgPSBkZXZpY2UuZ2V0U3RhdHVzKCk7CgogICAgICAgIGRldmljZS5zZXRTdGF0dXMoRW5kcG9pbnREZXZpY2UuU3RhdHVzLk9OTElORSk7CiAgICAgICAgZGV2aWNlLnNldExhc3RIZWFydGJlYXRBdChJbnN0YW50Lm5vdygpKTsKICAgICAgICBpZiAocmVxdWVzdC5pcEFkZHJlc3MoKSAhPSBudWxsICYmICFyZXF1ZXN0LmlwQWRkcmVzcygpLmlzQmxhbmsoKSkgewogICAgICAgICAgICBkZXZpY2Uuc2V0SXBBZGRyZXNzKHJlcXVlc3QuaXBBZGRyZXNzKCkpOwogICAgICAgIH0KCiAgICAgICAgRW5kcG9pbnREZXZpY2Ugc2F2ZWQgPSBlbmRwb2ludERldmljZVJlcG9zaXRvcnkuc2F2ZShkZXZpY2UpOwoKICAgICAgICBpZiAocHJldmlvdXNTdGF0dXMgIT0gRW5kcG9pbnREZXZpY2UuU3RhdHVzLk9OTElORSkgewogICAgICAgICAgICBlbmRwb2ludEV2ZW50UHVibGlzaGVyLnB1Ymxpc2hTdGF0dXNDaGFuZ2Uoc2F2ZWQpOwogICAgICAgIH0KCiAgICAgICAgcmV0dXJuIG5ldyBBZ2VudEhlYXJ0YmVhdFJlc3BvbnNlKCJPTkxJTkUiKTsKICAgIH0KfQo=
+package com.securesoc.service;
+
+import com.securesoc.config.AgentProperties;
+import com.securesoc.dto.agent.AgentHeartbeatRequest;
+import com.securesoc.dto.agent.AgentHeartbeatResponse;
+import com.securesoc.dto.agent.AgentRegisterRequest;
+import com.securesoc.dto.agent.AgentRegisterResponse;
+import com.securesoc.entity.EndpointDevice;
+import com.securesoc.exception.UnauthorizedException;
+import com.securesoc.repository.EndpointDeviceRepository;
+import com.securesoc.repository.LaboratoryRepository;
+import com.securesoc.security.TokenHasher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Service
+public class AgentService {
+
+    private final EndpointDeviceRepository endpointDeviceRepository;
+    private final LaboratoryRepository laboratoryRepository;
+    private final AgentProperties agentProperties;
+    private final EndpointEventPublisher endpointEventPublisher;
+
+    public AgentService(
+        EndpointDeviceRepository endpointDeviceRepository,
+        LaboratoryRepository laboratoryRepository,
+        AgentProperties agentProperties,
+        EndpointEventPublisher endpointEventPublisher
+    ) {
+        this.endpointDeviceRepository = endpointDeviceRepository;
+        this.laboratoryRepository = laboratoryRepository;
+        this.agentProperties = agentProperties;
+        this.endpointEventPublisher = endpointEventPublisher;
+    }
+
+    /**
+     * Registration is idempotent on MAC address: an agent that already has
+     * a valid local state file never calls this (see agent.py's
+     * AgentState), but a machine re-registering after its state file was
+     * lost gets a FRESH token issued for the SAME device record rather
+     * than a duplicate row - the old token is implicitly invalidated by
+     * being overwritten.
+     */
+    @Transactional
+    public AgentRegisterResponse register(AgentRegisterRequest request, String presentedSecret) {
+        if (presentedSecret == null || !presentedSecret.equals(agentProperties.registrationSecret())) {
+            throw new UnauthorizedException("Invalid agent registration secret");
+        }
+
+        EndpointDevice device = endpointDeviceRepository.findByMacAddress(request.macAddress())
+            .orElseGet(EndpointDevice::new);
+
+        device.setHostname(request.hostname());
+        device.setMacAddress(request.macAddress());
+        device.setIpAddress(request.ipAddress());
+        device.setOsName(request.osName());
+        device.setOsVersion(request.osVersion());
+        device.setCpuInfo(request.cpuInfo());
+        device.setRamMb(request.ramMb());
+        device.setDiskGb(request.diskGb());
+        device.setAgentVersion(request.agentVersion());
+        device.setStatus(EndpointDevice.Status.OFFLINE); // becomes ONLINE on first heartbeat
+
+        if (request.labId() != null && !request.labId().isBlank()) {
+            try {
+                UUID labId = UUID.fromString(request.labId());
+                laboratoryRepository.findById(labId).ifPresent(device::setLab);
+            } catch (IllegalArgumentException ignored) {
+                // Not a valid UUID (or unassigned) - device stays unassigned;
+                // an admin can assign it a lab later from the Inventory page.
+            }
+        }
+
+        String rawToken = TokenHasher.generateOpaqueToken();
+        device.setAgentTokenHash(TokenHasher.sha256Hex(rawToken));
+
+        EndpointDevice saved = endpointDeviceRepository.save(device);
+
+        String message = device.getLab() == null
+            ? "Registered. Endpoint is unassigned to a lab - an admin can assign it from Inventory."
+            : "Registered and assigned to " + device.getLab().getName() + ".";
+
+        return new AgentRegisterResponse(saved.getId(), rawToken, "OFFLINE", message);
+    }
+
+    /** Caller (AgentController) has already authenticated the device via
+     * AgentTokenAuthFilter by this point - the EndpointDevice principal is
+     * passed straight in rather than re-resolved from the token.
+     *
+     * Phase 6: publishes an EndpointStatusEvent (see EndpointEventPublisher)
+     * only when the device actually transitions - most heartbeats arrive
+     * while the device is already ONLINE, and re-publishing on every single
+     * one of those (every ~15s per device by default) would flood the
+     * topic for no frontend benefit. */
+    @Transactional
+    public AgentHeartbeatResponse heartbeat(EndpointDevice device, AgentHeartbeatRequest request) {
+        EndpointDevice.Status previousStatus = device.getStatus();
+
+        device.setStatus(EndpointDevice.Status.ONLINE);
+        device.setLastHeartbeatAt(Instant.now());
+        if (request.ipAddress() != null && !request.ipAddress().isBlank()) {
+            device.setIpAddress(request.ipAddress());
+        }
+
+        EndpointDevice saved = endpointDeviceRepository.save(device);
+
+        if (previousStatus != EndpointDevice.Status.ONLINE) {
+            endpointEventPublisher.publishStatusChange(saved);
+        }
+
+        return new AgentHeartbeatResponse("ONLINE");
+    }
+}
