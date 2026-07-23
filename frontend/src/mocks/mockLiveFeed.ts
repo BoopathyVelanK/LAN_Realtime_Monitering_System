@@ -47,6 +47,7 @@ export function startMockLiveFeed(handlers: MockLiveFeedHandlers): () => void {
         hostname: endpoint.hostname,
         status: nowOnline ? 'ONLINE' : 'OFFLINE',
         lastHeartbeatAt: new Date().toISOString(),
+        labName: endpoint.labName,
       });
     } else {
       const score = Math.floor(Math.random() * 100);
