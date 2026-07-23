@@ -7,19 +7,20 @@
  * (securesoc-backend/src/main/java/com/securesoc/dto/ + controller/):
  *   - AuthResponse, LoginRequest, EndpointSummaryResponse, PageResponse,
  *     the 8 monitoring event *EventResponse / RunningAppSnapshotResponse
- *     types, and DepartmentResponse/LaboratoryResponse below: real
- *     backend DTOs exist and are wired to real controllers
- *     (AuthController, EndpointController, MonitoringController's GET
- *     endpoints, DepartmentController, LaboratoryController).
- *   - AlertResponse, RiskScoreResponse, EndpointStatusEvent: CONTRACT-FIRST
- *     types only - there is no AlertController, RiskController, Alert
- *     entity, risk-scoring engine, or WebSocket push layer on the backend
- *     yet (that's Phase 4's detection engine and Phase 5's real-time
- *     layer). These shapes exist so the frontend and future backend agree
- *     on the contract in advance; nothing currently returns this data
- *     from a real endpoint. See frontend/src/api/dashboardApi.ts, which
- *     deliberately always serves these from mocks/data.ts regardless of
- *     VITE_USE_MOCKS until that backend work lands.
+ *     types, DepartmentResponse/LaboratoryResponse, and (as of Phase 6)
+ *     EndpointStatusEvent below: real backend DTOs exist and are wired to
+ *     real controllers/services (AuthController, EndpointController,
+ *     MonitoringController's GET endpoints, DepartmentController,
+ *     LaboratoryController, and WebSocketEndpointEventPublisher for
+ *     EndpointStatusEvent specifically).
+ *   - AlertResponse, RiskScoreResponse: still CONTRACT-FIRST types only -
+ *     there is no AlertController, RiskController, Alert entity, or
+ *     risk-scoring engine on the backend yet. These shapes exist so the
+ *     frontend and future backend agree on the contract in advance;
+ *     nothing currently returns this data from a real endpoint. See
+ *     frontend/src/api/dashboardApi.ts, which deliberately always serves
+ *     these from mocks/data.ts regardless of VITE_USE_MOCKS until that
+ *     backend work lands.
  */
 
 export interface AuthResponse {
@@ -58,13 +59,17 @@ export interface EndpointSummaryResponse {
 
 /** Pushed over /topic/endpoints/status — deliberately smaller than
  * EndpointSummaryResponse, see backend EndpointStatusEvent Javadoc.
- * CONTRACT-FIRST: no WebSocket push layer exists on the backend yet
- * (Phase 5) - see header comment above. */
+ * Real as of Phase 6: com.securesoc.service.WebSocketEndpointEventPublisher
+ * publishes this exact shape whenever a device transitions ONLINE/OFFLINE
+ * (heartbeat bringing it back online, or the offline sweeper marking it
+ * stale) - not on every heartbeat. labName is additive on top of the
+ * shape this type originally had. */
 export interface EndpointStatusEvent {
   endpointId: string;
   hostname: string;
   status: EndpointStatus;
   lastHeartbeatAt: string | null;
+  labName: string | null;
 }
 
 export type AlertSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
