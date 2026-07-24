@@ -72,6 +72,20 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login", "/auth/refresh", "/agents/register").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+                        // SockJS's own negotiation requests (GET /ws/info,
+                        // then the actual XHR-streaming/WebSocket transport
+                        // requests under /ws/**) carry no Authorization
+                        // header - auth for this path is handled entirely
+                        // by WebSocketAuthHandshakeInterceptor's ?token=
+                        // query-param check at the handshake layer (see
+                        // WebSocketConfig), not by this filter chain. This
+                        // permitAll only lets the HTTP upgrade/negotiation
+                        // requests through; it does not weaken WebSocket
+                        // auth itself, since a rejected handshake still
+                        // returns 401 from the interceptor before any STOMP
+                        // session or topic subscription exists. All other
+                        // REST endpoints are unaffected by this change.
+                        .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(agentTokenAuthFilter, UsernamePasswordAuthenticationFilter.class)
