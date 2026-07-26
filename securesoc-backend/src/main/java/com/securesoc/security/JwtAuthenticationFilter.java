@@ -7,6 +7,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -19,6 +21,8 @@ import java.util.UUID;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
@@ -35,6 +39,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
         String header = request.getHeader("Authorization");
+
+        // TEMP DEBUG (Phase 6 /ws/info 401 investigation - remove once resolved)
+        log.info("[WS-DEBUG][JwtAuthenticationFilter] method={} requestURI={} hasAuthorizationHeader={}",
+            request.getMethod(), request.getRequestURI(), header != null);
 
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
@@ -63,6 +71,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 SecurityContextHolder.clearContext();
             }
         }
+
+        // TEMP DEBUG (Phase 6 /ws/info 401 investigation - remove once resolved)
+        log.info("[WS-DEBUG][JwtAuthenticationFilter] requestURI={} authenticationSetInContext={}",
+            request.getRequestURI(), SecurityContextHolder.getContext().getAuthentication() != null);
 
         filterChain.doFilter(request, response);
     }
