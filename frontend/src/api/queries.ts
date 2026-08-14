@@ -7,7 +7,7 @@ export function useEndpoints() {
   return useQuery({
     queryKey: queryKeys.endpoints(),
     queryFn: dashboardApi.getEndpoints,
-    refetchInterval: 60_000,
+    refetchInterval: false,
   });
 }
 
