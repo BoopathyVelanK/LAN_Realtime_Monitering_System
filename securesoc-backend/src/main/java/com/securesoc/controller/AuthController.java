@@ -4,6 +4,7 @@ import com.securesoc.dto.AuthResponse;
 import com.securesoc.dto.LoginRequest;
 import com.securesoc.dto.RefreshRequest;
 import com.securesoc.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,8 +20,12 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ResponseEntity.ok(authService.login(request.usernameOrEmail(), request.password()));
+    public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        // Best-effort source IP for the new auth_failure_events trail (see
+        // AuthFailureEvent's Javadoc) - request.getRemoteAddr() only, no
+        // X-Forwarded-For handling yet since there's no reverse proxy in
+        // front of this backend today. Revisit if/when one is added.
+        return ResponseEntity.ok(authService.login(request.usernameOrEmail(), request.password(), httpRequest.getRemoteAddr()));
     }
 
     @PostMapping("/refresh")

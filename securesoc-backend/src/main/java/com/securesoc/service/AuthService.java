@@ -1,10 +1,12 @@
 package com.securesoc.service;
 
 import com.securesoc.dto.AuthResponse;
+import com.securesoc.entity.AuthFailureEvent;
 import com.securesoc.entity.RefreshToken;
 import com.securesoc.entity.User;
 import com.securesoc.exception.AccountLockedException;
 import com.securesoc.exception.UnauthorizedException;
+import com.securesoc.repository.AuthFailureEventRepository;
 import com.securesoc.repository.RefreshTokenRepository;
 import com.securesoc.repository.UserRepository;
 import com.securesoc.security.JwtService;
@@ -28,23 +30,34 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final AuthFailureEventRepository authFailureEventRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
     public AuthService(
         UserRepository userRepository,
         RefreshTokenRepository refreshTokenRepository,
+        AuthFailureEventRepository authFailureEventRepository,
         PasswordEncoder passwordEncoder,
         JwtService jwtService
     ) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.authFailureEventRepository = authFailureEventRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
     }
 
+    /** Overload kept for any other caller/test that doesn't have a source
+     * IP available - behaves exactly as before, just records the failure
+     * event with a null source_ip. */
     @Transactional
     public AuthResponse login(String usernameOrEmail, String rawPassword) {
+        return login(usernameOrEmail, rawPassword, null);
+    }
+
+    @Transactional
+    public AuthResponse login(String usernameOrEmail, String rawPassword, String sourceIp) {
         User user = userRepository.findByUsernameOrEmail(usernameOrEmail)
             .orElseThrow(() -> new UnauthorizedException("Invalid username/email or password"));
 
@@ -58,7 +71,7 @@ public class AuthService {
         }
 
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            registerFailedAttempt(user);
+            registerFailedAttempt(user, sourceIp);
             throw new UnauthorizedException("Invalid username/email or password");
         }
 
@@ -97,13 +110,23 @@ public class AuthService {
         });
     }
 
-    private void registerFailedAttempt(User user) {
+    /** Unchanged counter/lockout logic, PLUS (new) one AuthFailureEvent row
+     * per call - see V5__phase4_detection_foundation.sql and
+     * AuthFailureEvent's Javadoc for why. Fires on exactly the same
+     * condition this method already fired on before (wrong password for a
+     * known, unlocked, enabled user) - no new trigger paths added. */
+    private void registerFailedAttempt(User user, String sourceIp) {
         int attempts = user.getFailedLoginAttempts() + 1;
         user.setFailedLoginAttempts(attempts);
         if (attempts >= MAX_FAILED_ATTEMPTS) {
             user.setLockedUntil(Instant.now().plusSeconds(LOCKOUT_MINUTES * 60));
         }
         userRepository.save(user);
+
+        AuthFailureEvent event = new AuthFailureEvent();
+        event.setUser(user);
+        event.setSourceIp(sourceIp);
+        authFailureEventRepository.save(event);
     }
 
     private AuthResponse issueTokens(User user) {
