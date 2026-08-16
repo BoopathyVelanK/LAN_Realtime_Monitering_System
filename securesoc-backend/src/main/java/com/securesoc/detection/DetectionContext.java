@@ -15,17 +15,22 @@ import java.util.UUID;
  * "AUTH_FAILURE") so {@link DetectionEngine} can select the rules that
  * apply to a given context.
  *
- * {@code sourcePayload} is an optional escape hatch: it carries a reference
- * to the originating event/entity (or any data a concrete detector needs)
- * without this record needing to know its type. No detection logic reads
- * or interprets it here - that is entirely up to the detector that
- * declares support for the relevant rule.
+ * {@code event} carries whatever event-specific data a detector needs,
+ * typed as {@link DetectionEvent} rather than {@code Object}. This is
+ * deliberately not a generic type parameter or a reflection-based lookup -
+ * it is a plain marker interface that a future concrete
+ * {@code DetectionEvent} implementation (paired with its own detector)
+ * will implement, so a detector still has to narrow it with an
+ * {@code instanceof} pattern match, but only against a small, known set of
+ * purpose-built types rather than an arbitrary {@code Object} cast.
+ * {@code event} may be {@code null} when a context carries no
+ * detector-specific payload beyond the fields already on this record.
  */
 public record DetectionContext(
     String eventSource,
     UUID endpointId,
     UUID userId,
     Instant occurredAt,
-    Object sourcePayload
+    DetectionEvent event
 ) {
 }

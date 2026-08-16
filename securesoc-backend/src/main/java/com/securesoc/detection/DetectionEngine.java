@@ -27,6 +27,13 @@ import java.util.Optional;
  * the future RepeatedFailedLoginDetector) only means registering another
  * {@code Detector} bean; this class does not need to change.
  *
+ * Detector routing is deterministic and safe by construction: a rule with
+ * no supporting detector is simply skipped (no result invented), a rule
+ * with exactly one supporting detector is evaluated normally, and a rule
+ * with more than one supporting detector throws
+ * {@link AmbiguousDetectorException} rather than silently picking one -
+ * see {@link #findDetector(DetectionRule)}.
+ *
  * Read-only: this foundation does not persist alerts, risk scores, or
  * publish anything - that is future AlertService/RiskEngine/WebSocket work.
  */
@@ -53,7 +60,22 @@ public class DetectionEngine {
             .toList();
     }
 
+    /**
+     * Returns the single {@link Detector} that supports {@code rule}, or
+     * {@link Optional#empty()} if none do. Throws
+     * {@link AmbiguousDetectorException} if more than one detector reports
+     * support for the same rule - callers must not fall back to picking
+     * one, since that would make behavior depend on Spring bean ordering.
+     */
     private Optional<Detector> findDetector(DetectionRule rule) {
-        return detectors.stream().filter(detector -> detector.supports(rule)).findFirst();
+        List<Detector> matching = detectors.stream()
+            .filter(detector -> detector.supports(rule))
+            .toList();
+
+        if (matching.size() > 1) {
+            throw new AmbiguousDetectorException(rule, matching.size());
+        }
+
+        return matching.isEmpty() ? Optional.empty() : Optional.of(matching.get(0));
     }
 }
