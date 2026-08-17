@@ -34,6 +34,10 @@ public class Alert {
     @JoinColumn(name = "rule_id")
     private DetectionRule rule;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
+
     @Column(nullable = false, length = 200)
     private String title;
 
