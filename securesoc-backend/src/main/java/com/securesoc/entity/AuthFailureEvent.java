@@ -1,5 +1,6 @@
 package com.securesoc.entity;
 
+import com.securesoc.detection.DetectionEvent;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,14 +20,14 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
-public class AuthFailureEvent {
+public class AuthFailureEvent implements DetectionEvent {
 
     @Id
     @GeneratedValue
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
+    @JoinColumn(name = "user_id")
     private User user;
 
     /** Best-effort - see AuthController for how this is captured

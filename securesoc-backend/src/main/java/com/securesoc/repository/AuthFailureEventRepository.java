@@ -12,4 +12,6 @@ public interface AuthFailureEventRepository extends JpaRepository<AuthFailureEve
     /** For the future FailedLoginDetector: failures for a user since a
      * given instant, most recent first. Not called from anywhere yet. */
     List<AuthFailureEvent> findByUser_IdAndAttemptedAtAfterOrderByAttemptedAtDesc(UUID userId, Instant since);
+
+    long countByUser_IdAndAttemptedAtAfter(UUID userId, Instant since);
 }
