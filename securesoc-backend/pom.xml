@@ -99,6 +99,22 @@
       <artifactId>h2</artifactId>
       <scope>test</scope>
     </dependency>
+
+    <!-- Testcontainers - PostgreSQL integration tests only. Versions are
+         managed by spring-boot-starter-parent's imported dependency
+         management (testcontainers.version), so none is pinned here. Used
+         to run real Flyway migrations against an ephemeral, per-test-run
+         Postgres container - never the developer's local Postgres. -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
