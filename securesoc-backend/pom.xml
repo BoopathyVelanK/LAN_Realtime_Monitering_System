@@ -14,12 +14,18 @@
   <groupId>com.securesoc</groupId>
   <artifactId>securesoc-backend</artifactId>
   <version>0.1.0</version>
-  <name>securesoc-backend</name>
+  <n>securesoc-backend</n>
   <description>SecureSOC / LAN Realtime Monitoring System - Spring Boot backend</description>
 
   <properties>
     <java.version>21</java.version>
     <jjwt.version>0.12.6</jjwt.version>
+    <!-- Override Spring Boot 3.3.5's managed default (1.19.8): that
+         version's bundled docker-java client can't negotiate with
+         current Docker Desktop/Engine (29.x) on Windows - see
+         testcontainers-java#11422 and #11235. 1.21.4 is the minimum
+         version confirmed to resolve it while staying on the 1.x line. -->
+    <testcontainers.version>1.21.4</testcontainers.version>
   </properties>
 
   <dependencies>
@@ -100,9 +106,9 @@
       <scope>test</scope>
     </dependency>
 
-    <!-- Testcontainers - PostgreSQL integration tests only. Versions are
-         managed by spring-boot-starter-parent's imported dependency
-         management (testcontainers.version), so none is pinned here. Used
+    <!-- Testcontainers - PostgreSQL integration tests only. Version is
+         pinned above via the testcontainers.version property (overriding
+         Spring Boot's managed default - see that property for why). Used
          to run real Flyway migrations against an ephemeral, per-test-run
          Postgres container - never the developer's local Postgres. -->
     <dependency>
