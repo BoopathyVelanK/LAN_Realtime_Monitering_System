@@ -14,7 +14,7 @@
   <groupId>com.securesoc</groupId>
   <artifactId>securesoc-backend</artifactId>
   <version>0.1.0</version>
-  <n>securesoc-backend</n>
+  <name>securesoc-backend</name>
   <description>SecureSOC / LAN Realtime Monitoring System - Spring Boot backend</description>
 
   <properties>
