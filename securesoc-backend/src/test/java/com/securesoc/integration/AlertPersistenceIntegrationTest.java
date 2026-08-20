@@ -10,9 +10,12 @@ import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.UserRepository;
 import com.securesoc.service.AlertService;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,17 +24,21 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end proof that a detected {@link DetectionResult} survives the
  * full production path - {@link AlertService}, the real Spring Data JPA
- * repositories, and Flyway's actual V1-V7 migrations - against a real
+ * repositories, and Flyway's actual V1-V8 migrations - against a real
  * PostgreSQL instance, not H2 and not a developer's local database.
  *
  * The PostgreSQL instance is an ephemeral Testcontainers container: a
@@ -43,9 +50,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * auto-created database inside the container, and {@link DynamicPropertySource}
  * wires that address into the Spring context before it starts.
  *
- * Test data is cleaned up via the test's own transaction rollback (see
- * {@code @Transactional} below) in addition to the container itself being
- * destroyed after the test class - nothing here persists beyond this run.
+ * Test data is cleaned up via each test method's own transaction rollback
+ * (see {@code @Transactional} below - Spring gives each @Test its own
+ * transaction/rollback under a class-level @Transactional) in addition to
+ * the container itself being destroyed after the test class - nothing
+ * here persists beyond this run.
  */
 @Testcontainers
 @SpringBootTest
@@ -79,6 +88,9 @@ class AlertPersistenceIntegrationTest {
     @Autowired
     private EndpointDeviceRepository endpointDeviceRepository;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Test
@@ -87,15 +99,7 @@ class AlertPersistenceIntegrationTest {
         User user = persistUser();
         EndpointDevice endpoint = persistEndpoint();
 
-        DetectionResult detectionResult = new DetectionResult(
-            true,
-            rule.getId(),
-            DetectionRule.Severity.HIGH,
-            "Repeated failed login attempts detected",
-            "5 failed login attempts observed for user within the last 300 seconds (threshold: 5).",
-            user.getId(),
-            endpoint.getId()
-        );
+        DetectionResult detectionResult = detectionResultFor(rule, user, endpoint);
 
         Optional<Alert> created = alertService.createAlertFrom(detectionResult);
         // Force the INSERT to actually execute against the container now,
@@ -124,6 +128,166 @@ class AlertPersistenceIntegrationTest {
         assertEquals(user.getId(), persisted.getUser().getId());
         assertNotNull(persisted.getEndpoint(), "Persisted Alert must reference the supplied EndpointDevice");
         assertEquals(endpoint.getId(), persisted.getEndpoint().getId());
+    }
+
+    // =====================================================================
+    // Alert deduplication
+    // =====================================================================
+
+    @Test
+    void sequentialDuplicateDetections_resultInExactlyOneOpenAlert() {
+        DetectionRule rule = persistRule();
+        User user = persistUser();
+        DetectionResult detectionResult = detectionResultFor(rule, user, null);
+
+        Optional<Alert> first = alertService.createAlertFrom(detectionResult);
+        alertRepository.flush();
+        Optional<Alert> second = alertService.createAlertFrom(detectionResult);
+        alertRepository.flush();
+
+        assertTrue(first.isPresent());
+        assertTrue(second.isPresent());
+        assertEquals(first.get().getId(), second.get().getId(),
+            "A duplicate OPEN detection for the same (user, rule) must reuse the existing alert");
+
+        List<Alert> alertsForUserAndRule = allAlertsFor(user.getId(), rule.getId());
+        assertEquals(1, alertsForUserAndRule.size(),
+            "Exactly one alert row should exist for this (user, rule) pair");
+        assertEquals(Alert.Status.OPEN, alertsForUserAndRule.get(0).getStatus());
+    }
+
+    @Test
+    void acknowledgedAlert_allowsANewOpenAlertForSameUserAndRule() {
+        DetectionRule rule = persistRule();
+        User user = persistUser();
+        DetectionResult detectionResult = detectionResultFor(rule, user, null);
+
+        Alert first = alertService.createAlertFrom(detectionResult).orElseThrow();
+        alertRepository.flush();
+
+        first.setStatus(Alert.Status.ACKNOWLEDGED);
+        alertRepository.saveAndFlush(first);
+
+        Alert second = alertService.createAlertFrom(detectionResult).orElseThrow();
+        alertRepository.flush();
+
+        assertNotEquals(first.getId(), second.getId(),
+            "An ACKNOWLEDGED alert must not suppress a new OPEN alert for the same (user, rule)");
+        assertEquals(Alert.Status.OPEN, second.getStatus());
+
+        List<Alert> alertsForUserAndRule = allAlertsFor(user.getId(), rule.getId());
+        assertEquals(2, alertsForUserAndRule.size());
+    }
+
+    @Test
+    void resolvedAlert_allowsANewOpenAlertForSameUserAndRule() {
+        DetectionRule rule = persistRule();
+        User user = persistUser();
+        DetectionResult detectionResult = detectionResultFor(rule, user, null);
+
+        Alert first = alertService.createAlertFrom(detectionResult).orElseThrow();
+        alertRepository.flush();
+
+        first.setStatus(Alert.Status.RESOLVED);
+        alertRepository.saveAndFlush(first);
+
+        Alert second = alertService.createAlertFrom(detectionResult).orElseThrow();
+        alertRepository.flush();
+
+        assertNotEquals(first.getId(), second.getId(),
+            "A RESOLVED alert must not suppress a new OPEN alert for the same (user, rule)");
+        assertEquals(Alert.Status.OPEN, second.getStatus());
+
+        List<Alert> alertsForUserAndRule = allAlertsFor(user.getId(), rule.getId());
+        assertEquals(2, alertsForUserAndRule.size());
+    }
+
+    @Test
+    void differentUserOrRule_allowsSeparateAlerts() {
+        DetectionRule ruleA = persistRule();
+        DetectionRule ruleB = persistRule();
+        User userA = persistUser();
+        User userB = persistUser();
+
+        Alert sameRuleDifferentUser1 = alertService.createAlertFrom(
+            detectionResultFor(ruleA, userA, null)).orElseThrow();
+        Alert sameRuleDifferentUser2 = alertService.createAlertFrom(
+            detectionResultFor(ruleA, userB, null)).orElseThrow();
+        Alert sameUserDifferentRule = alertService.createAlertFrom(
+            detectionResultFor(ruleB, userA, null)).orElseThrow();
+        alertRepository.flush();
+
+        assertNotEquals(sameRuleDifferentUser1.getId(), sameRuleDifferentUser2.getId(),
+            "Different users must not be deduplicated against each other, even for the same rule");
+        assertNotEquals(sameRuleDifferentUser1.getId(), sameUserDifferentRule.getId(),
+            "Different rules must not be deduplicated against each other, even for the same user");
+
+        assertEquals(1, allAlertsFor(userA.getId(), ruleA.getId()).size());
+        assertEquals(1, allAlertsFor(userB.getId(), ruleA.getId()).size());
+        assertEquals(1, allAlertsFor(userA.getId(), ruleB.getId()).size());
+    }
+
+    @Test
+    void postgresUniqueIndex_rejectsADuplicateOpenRowAtDatabaseLevel() {
+        DetectionRule rule = persistRule();
+        User user = persistUser();
+
+        Alert first = rawAlert(rule, user, Alert.Status.OPEN);
+        alertRepository.saveAndFlush(first);
+
+        Alert duplicate = rawAlert(rule, user, Alert.Status.OPEN);
+
+        assertThrows(DataIntegrityViolationException.class, () -> alertRepository.saveAndFlush(duplicate),
+            "The partial unique index from V8 must reject a second OPEN alert "
+                + "for the same (user_id, rule_id) inserted directly, bypassing AlertService's dedup check");
+    }
+
+    @Test
+    void v8Migration_appliesSuccessfully_andCreatesTheDedupIndex() {
+        @SuppressWarnings("unchecked")
+        List<Object> rows = entityManager.createNativeQuery(
+                "SELECT 1 FROM pg_indexes WHERE tablename = 'alerts' AND indexname = :indexName")
+            .setParameter("indexName", "idx_alerts_open_user_rule_dedup")
+            .getResultList();
+
+        assertFalse(rows.isEmpty(),
+            "V8__add_alert_open_dedup_index.sql must have created idx_alerts_open_user_rule_dedup on alerts");
+    }
+
+    // =====================================================================
+    // Helpers
+    // =====================================================================
+
+    private DetectionResult detectionResultFor(DetectionRule rule, User user, EndpointDevice endpoint) {
+        return new DetectionResult(
+            true,
+            rule.getId(),
+            DetectionRule.Severity.HIGH,
+            "Repeated failed login attempts detected",
+            "5 failed login attempts observed for user within the last 300 seconds (threshold: 5).",
+            user == null ? null : user.getId(),
+            endpoint == null ? null : endpoint.getId()
+        );
+    }
+
+    /** Raw Alert construction that bypasses AlertService entirely - used
+     * only to prove the database-level constraint fires independent of
+     * the application-level dedup check. */
+    private Alert rawAlert(DetectionRule rule, User user, Alert.Status status) {
+        Alert alert = new Alert();
+        alert.setRule(rule);
+        alert.setUser(user);
+        alert.setSeverity(Alert.Severity.HIGH);
+        alert.setTitle("Raw duplicate-index probe alert");
+        alert.setStatus(status);
+        return alert;
+    }
+
+    private List<Alert> allAlertsFor(UUID userId, UUID ruleId) {
+        return alertRepository.findAll().stream()
+            .filter(a -> a.getUser() != null && userId.equals(a.getUser().getId()))
+            .filter(a -> a.getRule() != null && ruleId.equals(a.getRule().getId()))
+            .toList();
     }
 
     private DetectionRule persistRule() {

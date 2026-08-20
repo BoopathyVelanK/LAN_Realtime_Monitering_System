@@ -21,9 +21,12 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,6 +44,8 @@ class AlertServiceTest {
     private UserRepository userRepository;
     @Mock
     private EndpointDeviceRepository endpointDeviceRepository;
+    @Mock
+    private AlertInsertExecutor alertInsertExecutor;
 
     private AlertService alertService;
 
@@ -51,15 +56,20 @@ class AlertServiceTest {
     @BeforeEach
     void setUp() {
         alertService = new AlertService(
-            alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository);
+            alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository,
+            alertInsertExecutor);
         ruleId = UUID.randomUUID();
         userId = UUID.randomUUID();
         endpointId = UUID.randomUUID();
     }
 
     private DetectionRule rule() {
+        return rule(ruleId);
+    }
+
+    private DetectionRule rule(UUID id) {
         DetectionRule rule = new DetectionRule();
-        rule.setId(ruleId);
+        rule.setId(id);
         rule.setName("Repeated failed login");
         rule.setRuleType(DetectionRule.RuleType.THRESHOLD);
         rule.setEventSource("AUTH_FAILURE");
@@ -68,6 +78,10 @@ class AlertServiceTest {
     }
 
     private DetectionResult detectedResult(UUID userId, UUID endpointId) {
+        return detectedResult(ruleId, userId, endpointId);
+    }
+
+    private DetectionResult detectedResult(UUID ruleId, UUID userId, UUID endpointId) {
         return new DetectionResult(
             true,
             ruleId,
@@ -79,7 +93,7 @@ class AlertServiceTest {
         );
     }
 
-    // --- detected result creates and saves an Alert ---
+    // --- detected result creates and saves an Alert (no user - dedup skipped) ---
 
     @Test
     void createAlertFrom_detectedResult_savesAlert() {
@@ -101,7 +115,8 @@ class AlertServiceTest {
         Optional<Alert> result = alertService.createAlertFrom(DetectionResult.none());
 
         assertTrue(result.isEmpty());
-        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository);
+        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
+            endpointDeviceRepository, alertInsertExecutor);
     }
 
     @Test
@@ -112,7 +127,8 @@ class AlertServiceTest {
         Optional<Alert> result = alertService.createAlertFrom(notDetected);
 
         assertTrue(result.isEmpty());
-        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository);
+        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
+            endpointDeviceRepository, alertInsertExecutor);
     }
 
     @Test
@@ -120,10 +136,11 @@ class AlertServiceTest {
         Optional<Alert> result = alertService.createAlertFrom(null);
 
         assertTrue(result.isEmpty());
-        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository);
+        verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
+            endpointDeviceRepository, alertInsertExecutor);
     }
 
-    // --- userId is mapped when present ---
+    // --- userId present: resolved, mapped, and routed through the dedup path ---
 
     @Test
     void createAlertFrom_userIdPresent_mapsUser() {
@@ -131,8 +148,10 @@ class AlertServiceTest {
         user.setId(userId);
         when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
         ArgumentCaptor<Alert> captor = ArgumentCaptor.forClass(Alert.class);
-        when(alertRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+        when(alertInsertExecutor.insertAlert(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         alertService.createAlertFrom(detectedResult(userId, null));
 
@@ -150,7 +169,7 @@ class AlertServiceTest {
         verifyNoInteractions(userRepository);
     }
 
-    // --- endpointId is mapped when present ---
+    // --- endpointId is mapped when present (userId absent here, so still the direct-save path) ---
 
     @Test
     void createAlertFrom_endpointIdPresent_mapsEndpoint() {
@@ -201,8 +220,10 @@ class AlertServiceTest {
         when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(endpointDeviceRepository.findById(endpointId)).thenReturn(Optional.of(endpoint));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
         ArgumentCaptor<Alert> captor = ArgumentCaptor.forClass(Alert.class);
-        when(alertRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+        when(alertInsertExecutor.insertAlert(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         alertService.createAlertFrom(detectedResult(userId, endpointId));
 
@@ -210,10 +231,11 @@ class AlertServiceTest {
         assertEquals(endpoint, captor.getValue().getEndpoint());
         verify(userRepository).findById(userId);
         verify(endpointDeviceRepository).findById(endpointId);
-        verify(alertRepository).save(any(Alert.class));
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
+        verify(alertRepository, never()).save(any(Alert.class));
     }
 
-    // --- missing required DetectionRule is handled correctly ---
+    // --- missing required DetectionRule/User/EndpointDevice is handled correctly ---
 
     @Test
     void createAlertFrom_missingRule_throwsResourceNotFoundExceptionAndDoesNotSave() {
@@ -223,6 +245,7 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(null, null)));
 
         verify(alertRepository, never()).save(any(Alert.class));
+        verifyNoInteractions(alertInsertExecutor);
     }
 
     @Test
@@ -234,6 +257,7 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(userId, null)));
 
         verify(alertRepository, never()).save(any(Alert.class));
+        verifyNoInteractions(alertInsertExecutor);
     }
 
     @Test
@@ -245,5 +269,173 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(null, endpointId)));
 
         verify(alertRepository, never()).save(any(Alert.class));
+        verifyNoInteractions(alertInsertExecutor);
+    }
+
+    // =====================================================================
+    // Alert deduplication
+    // =====================================================================
+
+    // --- first detection for a (user, rule) pair creates a new alert ---
+
+    @Test
+    void createAlertFrom_firstDetectionForUserAndRule_createsNewAlert() {
+        User user = new User();
+        user.setId(userId);
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
+        Alert inserted = new Alert();
+        inserted.setUser(user);
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenReturn(inserted);
+
+        Optional<Alert> result = alertService.createAlertFrom(detectedResult(userId, null));
+
+        assertTrue(result.isPresent());
+        assertSame(inserted, result.get());
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
+        verify(alertRepository, never()).save(any(Alert.class));
+    }
+
+    // --- duplicate OPEN detection reuses the existing alert instead of inserting ---
+
+    @Test
+    void createAlertFrom_existingOpenAlertForSameUserAndRule_reusesExistingAlert() {
+        User user = new User();
+        user.setId(userId);
+        Alert existing = new Alert();
+        existing.setId(UUID.randomUUID());
+        existing.setUser(user);
+        existing.setStatus(Alert.Status.OPEN);
+
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.of(existing));
+
+        Optional<Alert> result = alertService.createAlertFrom(detectedResult(userId, null));
+
+        assertTrue(result.isPresent());
+        assertSame(existing, result.get());
+        verifyNoInteractions(alertInsertExecutor);
+        verify(alertRepository, never()).save(any(Alert.class));
+    }
+
+    // --- an ACKNOWLEDGED existing alert does not suppress a new OPEN alert ---
+
+    @Test
+    void createAlertFrom_existingAcknowledgedAlert_doesNotSuppressNewOpenAlert() {
+        User user = new User();
+        user.setId(userId);
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        // The dedup lookup only ever queries for status = OPEN, so an
+        // ACKNOWLEDGED alert existing for this (user, rule) pair simply
+        // never matches it - the lookup returns empty here exactly as it
+        // would in the real repository/database.
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
+        Alert inserted = new Alert();
+        inserted.setId(UUID.randomUUID());
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenReturn(inserted);
+
+        Optional<Alert> result = alertService.createAlertFrom(detectedResult(userId, null));
+
+        assertTrue(result.isPresent());
+        assertSame(inserted, result.get());
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
+    }
+
+    // --- a RESOLVED existing alert does not suppress a new OPEN alert ---
+
+    @Test
+    void createAlertFrom_existingResolvedAlert_doesNotSuppressNewOpenAlert() {
+        User user = new User();
+        user.setId(userId);
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
+        Alert inserted = new Alert();
+        inserted.setId(UUID.randomUUID());
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenReturn(inserted);
+
+        Optional<Alert> result = alertService.createAlertFrom(detectedResult(userId, null));
+
+        assertTrue(result.isPresent());
+        assertSame(inserted, result.get());
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
+    }
+
+    // --- null userId skips deduplication entirely ---
+
+    @Test
+    void createAlertFrom_nullUserId_skipsDeduplication() {
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Optional<Alert> result = alertService.createAlertFrom(detectedResult(null, null));
+
+        assertTrue(result.isPresent());
+        verify(alertRepository, never())
+            .findByUser_IdAndRule_IdAndStatus(any(UUID.class), any(UUID.class), any(Alert.Status.class));
+        verifyNoInteractions(alertInsertExecutor);
+        verify(alertRepository).save(any(Alert.class));
+    }
+
+    // --- different users for the same rule do not deduplicate against each other ---
+
+    @Test
+    void createAlertFrom_differentUsersSameRule_doNotDeduplicate() {
+        UUID userIdA = UUID.randomUUID();
+        UUID userIdB = UUID.randomUUID();
+        User userA = new User();
+        userA.setId(userIdA);
+        User userB = new User();
+        userB.setId(userIdB);
+
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userIdA)).thenReturn(Optional.of(userA));
+        when(userRepository.findById(userIdB)).thenReturn(Optional.of(userB));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(eq(userIdA), eq(ruleId), eq(Alert.Status.OPEN)))
+            .thenReturn(Optional.empty());
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(eq(userIdB), eq(ruleId), eq(Alert.Status.OPEN)))
+            .thenReturn(Optional.empty());
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        alertService.createAlertFrom(detectedResult(userIdA, null));
+        alertService.createAlertFrom(detectedResult(userIdB, null));
+
+        verify(alertRepository).findByUser_IdAndRule_IdAndStatus(userIdA, ruleId, Alert.Status.OPEN);
+        verify(alertRepository).findByUser_IdAndRule_IdAndStatus(userIdB, ruleId, Alert.Status.OPEN);
+        verify(alertInsertExecutor, times(2)).insertAlert(any(Alert.class));
+    }
+
+    // --- different rules for the same user do not deduplicate against each other ---
+
+    @Test
+    void createAlertFrom_differentRulesSameUser_doNotDeduplicate() {
+        UUID ruleIdA = ruleId;
+        UUID ruleIdB = UUID.randomUUID();
+        User user = new User();
+        user.setId(userId);
+
+        when(detectionRuleRepository.findById(ruleIdA)).thenReturn(Optional.of(rule(ruleIdA)));
+        when(detectionRuleRepository.findById(ruleIdB)).thenReturn(Optional.of(rule(ruleIdB)));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(eq(userId), eq(ruleIdA), eq(Alert.Status.OPEN)))
+            .thenReturn(Optional.empty());
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(eq(userId), eq(ruleIdB), eq(Alert.Status.OPEN)))
+            .thenReturn(Optional.empty());
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        alertService.createAlertFrom(detectedResult(ruleIdA, userId, null));
+        alertService.createAlertFrom(detectedResult(ruleIdB, userId, null));
+
+        verify(alertRepository).findByUser_IdAndRule_IdAndStatus(userId, ruleIdA, Alert.Status.OPEN);
+        verify(alertRepository).findByUser_IdAndRule_IdAndStatus(userId, ruleIdB, Alert.Status.OPEN);
+        verify(alertInsertExecutor, times(2)).insertAlert(any(Alert.class));
+        assertNotEquals(ruleIdA, ruleIdB);
     }
 }
