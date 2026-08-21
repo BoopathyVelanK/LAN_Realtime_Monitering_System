@@ -18,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -98,6 +99,7 @@ class AlertPersistenceIntegrationTest {
         DetectionRule rule = persistRule();
         User user = persistUser();
         EndpointDevice endpoint = persistEndpoint();
+        commitFixtures();
 
         DetectionResult detectionResult = detectionResultFor(rule, user, endpoint);
 
@@ -138,6 +140,7 @@ class AlertPersistenceIntegrationTest {
     void sequentialDuplicateDetections_resultInExactlyOneOpenAlert() {
         DetectionRule rule = persistRule();
         User user = persistUser();
+        commitFixtures();
         DetectionResult detectionResult = detectionResultFor(rule, user, null);
 
         Optional<Alert> first = alertService.createAlertFrom(detectionResult);
@@ -160,6 +163,7 @@ class AlertPersistenceIntegrationTest {
     void acknowledgedAlert_allowsANewOpenAlertForSameUserAndRule() {
         DetectionRule rule = persistRule();
         User user = persistUser();
+        commitFixtures();
         DetectionResult detectionResult = detectionResultFor(rule, user, null);
 
         Alert first = alertService.createAlertFrom(detectionResult).orElseThrow();
@@ -167,6 +171,14 @@ class AlertPersistenceIntegrationTest {
 
         first.setStatus(Alert.Status.ACKNOWLEDGED);
         alertRepository.saveAndFlush(first);
+        // Same REQUIRES_NEW visibility gap as above: the status change just
+        // flushed here is only visible in THIS transaction until it's
+        // actually committed. Without committing it now, the next
+        // AlertInsertExecutor.insertAlert() call below would run in a
+        // separate transaction that still sees `first` as OPEN, and its
+        // own OPEN insert for the same (user_id, rule_id) would collide
+        // with idx_alerts_open_user_rule_dedup instead of succeeding.
+        commitFixtures();
 
         Alert second = alertService.createAlertFrom(detectionResult).orElseThrow();
         alertRepository.flush();
@@ -183,6 +195,7 @@ class AlertPersistenceIntegrationTest {
     void resolvedAlert_allowsANewOpenAlertForSameUserAndRule() {
         DetectionRule rule = persistRule();
         User user = persistUser();
+        commitFixtures();
         DetectionResult detectionResult = detectionResultFor(rule, user, null);
 
         Alert first = alertService.createAlertFrom(detectionResult).orElseThrow();
@@ -190,6 +203,10 @@ class AlertPersistenceIntegrationTest {
 
         first.setStatus(Alert.Status.RESOLVED);
         alertRepository.saveAndFlush(first);
+        // See acknowledgedAlert_allowsANewOpenAlertForSameUserAndRule for
+        // why this status transition must be committed, not just flushed,
+        // before the next REQUIRES_NEW insert attempt below.
+        commitFixtures();
 
         Alert second = alertService.createAlertFrom(detectionResult).orElseThrow();
         alertRepository.flush();
@@ -208,6 +225,7 @@ class AlertPersistenceIntegrationTest {
         DetectionRule ruleB = persistRule();
         User userA = persistUser();
         User userB = persistUser();
+        commitFixtures();
 
         Alert sameRuleDifferentUser1 = alertService.createAlertFrom(
             detectionResultFor(ruleA, userA, null)).orElseThrow();
@@ -257,6 +275,42 @@ class AlertPersistenceIntegrationTest {
     // =====================================================================
     // Helpers
     // =====================================================================
+
+    /**
+     * Commits everything persisted so far in the current test transaction
+     * and immediately opens a fresh one, so that a later
+     * {@code Propagation.REQUIRES_NEW} call (AlertInsertExecutor.insertAlert)
+     * - which runs on a genuinely separate physical transaction/connection -
+     * can actually see this data.
+     *
+     * Why this is needed: this test class rolls back its transaction at the
+     * end of each {@code @Test} method (standard {@code @Transactional}
+     * test cleanup), so a row created via persistRule()/persistUser()/
+     * persistEndpoint(), or a status change flushed via
+     * alertRepository.saveAndFlush(...), is only ever flushed - never
+     * committed - for as long as that transaction stays open. Under
+     * PostgreSQL's default READ COMMITTED isolation, AlertInsertExecutor's
+     * own REQUIRES_NEW transaction cannot see anything this transaction
+     * hasn't committed yet, so a foreign key check (alerts_rule_id_fkey,
+     * alerts_user_id_fkey) or the idx_alerts_open_user_rule_dedup partial
+     * unique index would evaluate against stale/missing data - not because
+     * the row doesn't exist, but because it isn't visible yet to that
+     * other transaction.
+     *
+     * Any row committed here is not covered by this test method's own
+     * final rollback and persists for the lifetime of the shared
+     * Testcontainers instance (torn down once the whole test class
+     * finishes). That's acceptable: every fixture here uses a fresh random
+     * UUID/name per test (see persistRule/persistUser/persistEndpoint), so
+     * there's no cross-test collision, and no assertion in this class
+     * depends on total row counts - only on rows scoped to a specific
+     * user/rule id.
+     */
+    private void commitFixtures() {
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+        TestTransaction.start();
+    }
 
     private DetectionResult detectionResultFor(DetectionRule rule, User user, EndpointDevice endpoint) {
         return new DetectionResult(
