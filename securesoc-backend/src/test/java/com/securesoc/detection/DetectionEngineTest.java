@@ -3,6 +3,7 @@ package com.securesoc.detection;
 import com.securesoc.entity.DetectionRule;
 import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.service.AlertService;
+import com.securesoc.service.RiskScoreService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,6 +33,8 @@ class DetectionEngineTest {
     private DetectionRuleRepository detectionRuleRepository;
     @Mock
     private AlertService alertService;
+    @Mock
+    private RiskScoreService riskScoreService;
     @Mock
     private Detector detectorA;
     @Mock
@@ -63,7 +67,7 @@ class DetectionEngineTest {
     }
 
     private DetectionEngine engine() {
-        return new DetectionEngine(detectionRuleRepository, List.of(detectorA, detectorB), alertService);
+        return new DetectionEngine(detectionRuleRepository, List.of(detectorA, detectorB), alertService, riskScoreService);
     }
 
     // --- detected result is passed to AlertService ---
@@ -87,10 +91,29 @@ class DetectionEngineTest {
         verify(alertService, times(1)).createAlertFrom(detected);
     }
 
-    // --- non-detected result is NOT passed to AlertService ---
+    // --- detected result is passed to RiskScoreService ---
 
     @Test
-    void evaluate_nonDetectedResult_isNotPassedToAlertService() {
+    void evaluate_detectedResult_isPassedToRiskScoreService() {
+        DetectionRule rule = rule();
+        DetectionResult detected = new DetectionResult(
+            true, rule.getId(), DetectionRule.Severity.HIGH, "title", "desc", userId, endpointId);
+
+        when(detectionRuleRepository.findByEventSourceAndEnabledTrue("AUTH_FAILURE"))
+            .thenReturn(List.of(rule));
+        when(detectorA.supports(rule)).thenReturn(true);
+        when(detectorB.supports(rule)).thenReturn(false);
+        when(detectorA.evaluate(any(DetectionContext.class), eq(rule))).thenReturn(detected);
+
+        engine().evaluate(context());
+
+        verify(riskScoreService, times(1)).recordDetection(detected);
+    }
+
+    // --- non-detected result is NOT passed to AlertService or RiskScoreService ---
+
+    @Test
+    void evaluate_nonDetectedResult_isNotPassedToAlertServiceOrRiskScoreService() {
         DetectionRule rule = rule();
         DetectionResult none = DetectionResult.none();
 
@@ -104,10 +127,11 @@ class DetectionEngineTest {
 
         assertTrue(results.isEmpty());
         verifyNoInteractions(alertService);
+        verifyNoInteractions(riskScoreService);
     }
 
     @Test
-    void evaluate_mixOfDetectedAndNotDetected_onlyDetectedPassedToAlertService() {
+    void evaluate_mixOfDetectedAndNotDetected_onlyDetectedPassedToAlertServiceAndRiskScoreService() {
         DetectionRule ruleDetected = rule();
         DetectionRule ruleNotDetected = rule();
 
@@ -128,12 +152,40 @@ class DetectionEngineTest {
         assertEquals(1, results.size());
         verify(alertService, times(1)).createAlertFrom(detected);
         verify(alertService, never()).createAlertFrom(notDetected);
+        verify(riskScoreService, times(1)).recordDetection(detected);
+        verify(riskScoreService, never()).recordDetection(notDetected);
+    }
+
+    // --- RiskScoreService is called unconditionally, independent of what AlertService returns ---
+
+    @Test
+    void evaluate_riskScoringHappensRegardlessOfAlertServiceOutcome() {
+        // Simulates AlertService internally skipping/deduplicating (e.g.
+        // returning Optional.empty() because userId was null - see
+        // AlertService's own dedup-skip behavior) - DetectionEngine must
+        // not read or branch on that return value before calling
+        // RiskScoreService. It doesn't use the return value at all today,
+        // but this test pins that down explicitly so it can't regress.
+        DetectionRule rule = rule();
+        DetectionResult detected = new DetectionResult(
+            true, rule.getId(), DetectionRule.Severity.HIGH, "title", "desc", userId, endpointId);
+
+        when(detectionRuleRepository.findByEventSourceAndEnabledTrue("AUTH_FAILURE"))
+            .thenReturn(List.of(rule));
+        when(detectorA.supports(rule)).thenReturn(true);
+        when(detectorB.supports(rule)).thenReturn(false);
+        when(detectorA.evaluate(any(DetectionContext.class), eq(rule))).thenReturn(detected);
+        when(alertService.createAlertFrom(detected)).thenReturn(Optional.empty());
+
+        engine().evaluate(context());
+
+        verify(riskScoreService, times(1)).recordDetection(detected);
     }
 
     // --- multiple matching detectors still throw AmbiguousDetectorException ---
 
     @Test
-    void evaluate_multipleMatchingDetectors_throwsAmbiguousDetectorExceptionAndSkipsAlertService() {
+    void evaluate_multipleMatchingDetectors_throwsAmbiguousDetectorExceptionAndSkipsAlertServiceAndRiskScoreService() {
         DetectionRule rule = rule();
 
         when(detectionRuleRepository.findByEventSourceAndEnabledTrue("AUTH_FAILURE"))
@@ -143,6 +195,7 @@ class DetectionEngineTest {
 
         assertThrows(AmbiguousDetectorException.class, () -> engine().evaluate(context()));
         verifyNoInteractions(alertService);
+        verifyNoInteractions(riskScoreService);
     }
 
     // --- existing rule filtering behavior remains intact ---
@@ -157,10 +210,11 @@ class DetectionEngineTest {
         assertTrue(results.isEmpty());
         verify(detectionRuleRepository).findByEventSourceAndEnabledTrue("AUTH_FAILURE");
         verifyNoInteractions(alertService);
+        verifyNoInteractions(riskScoreService);
     }
 
     @Test
-    void evaluate_noSupportingDetector_ruleSkippedWithoutErrorOrAlert() {
+    void evaluate_noSupportingDetector_ruleSkippedWithoutErrorOrAlertOrRiskScoring() {
         DetectionRule rule = rule();
 
         when(detectionRuleRepository.findByEventSourceAndEnabledTrue("AUTH_FAILURE"))
@@ -172,5 +226,6 @@ class DetectionEngineTest {
 
         assertTrue(results.isEmpty());
         verifyNoInteractions(alertService);
+        verifyNoInteractions(riskScoreService);
     }
 }
