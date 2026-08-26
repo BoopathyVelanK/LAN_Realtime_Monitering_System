@@ -15,6 +15,7 @@ import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.RiskScoreRepository;
 import com.securesoc.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,8 +29,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -96,6 +99,16 @@ class RiskScorePersistenceIntegrationTest {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int THRESHOLD = 5;
     private static final int WINDOW_SECONDS = 300;
+
+    // Populated by persistRule()/persistUser()/persistEndpoint() as each test
+    // creates its fixtures, and drained by cleanUpCommittedFixtures() below.
+    // Needed because commitFixtures() permanently commits these rows (see its
+    // javadoc) with no rollback to rely on - without this, a DetectionRule
+    // left behind by one test is still there for DetectionEngine.evaluate()
+    // to match in every subsequent test, inflating the risk score it computes.
+    private final Set<UUID> createdRuleIds = new LinkedHashSet<>();
+    private final Set<UUID> createdUserIds = new LinkedHashSet<>();
+    private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
 
     @Test
     void detectedResult_flowsThroughDetectionEngine_andPersistsBothAlertAndRiskScore() {
@@ -177,6 +190,66 @@ class RiskScorePersistenceIntegrationTest {
     }
 
     // =====================================================================
+    // Cleanup
+    // =====================================================================
+
+    /**
+     * Deletes everything commitFixtures() permanently committed for the test
+     * that just ran, plus whatever Alert/RiskScore rows the production code
+     * under test (DetectionEngine.evaluate() -&gt; AlertInsertExecutor /
+     * RiskScoreService, both REQUIRES_NEW) committed on top of it - none of
+     * that is covered by this class's own transaction rollback, since it was
+     * never part of that transaction to begin with.
+     *
+     * Deleted in FK-safe order: Alerts -&gt; RiskScore -&gt; AuthFailureEvents -&gt;
+     * EndpointDevice -&gt; User -&gt; DetectionRule. Alerts and RiskScores aren't
+     * separately tracked by id (they're created by the production code, not
+     * these helpers) so they're located by the tracked user/rule/endpoint
+     * ids they reference instead, mirroring allAlertsFor()'s own filtering.
+     *
+     * Runs in its own committed transaction so the deletes are real and not
+     * undone by the standard @Transactional test rollback that follows.
+     */
+    @AfterEach
+    void cleanUpCommittedFixtures() {
+        if (!TestTransaction.isActive()) {
+            TestTransaction.start();
+        }
+
+        alertRepository.findAll().stream()
+            .filter(a -> (a.getUser() != null && createdUserIds.contains(a.getUser().getId()))
+                || (a.getRule() != null && createdRuleIds.contains(a.getRule().getId()))
+                || (a.getEndpoint() != null && createdEndpointIds.contains(a.getEndpoint().getId())))
+            .forEach(alertRepository::delete);
+        alertRepository.flush();
+
+        createdEndpointIds.forEach(endpointId ->
+            riskScoreRepository.findByEndpoint_Id(endpointId).ifPresent(riskScoreRepository::delete));
+        riskScoreRepository.flush();
+
+        authFailureEventRepository.findAll().stream()
+            .filter(event -> event.getUser() != null && createdUserIds.contains(event.getUser().getId()))
+            .forEach(authFailureEventRepository::delete);
+        authFailureEventRepository.flush();
+
+        createdEndpointIds.forEach(endpointDeviceRepository::deleteById);
+        endpointDeviceRepository.flush();
+
+        createdUserIds.forEach(userRepository::deleteById);
+        userRepository.flush();
+
+        createdRuleIds.forEach(detectionRuleRepository::deleteById);
+        detectionRuleRepository.flush();
+
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
+        createdRuleIds.clear();
+        createdUserIds.clear();
+        createdEndpointIds.clear();
+    }
+
+    // =====================================================================
     // Helpers (mirrors AlertPersistenceIntegrationTest's fixture conventions)
     // =====================================================================
 
@@ -210,7 +283,9 @@ class RiskScorePersistenceIntegrationTest {
         rule.setWindowSeconds(WINDOW_SECONDS);
         rule.setSeverity(DetectionRule.Severity.HIGH);
         rule.setEnabled(true);
-        return detectionRuleRepository.save(rule);
+        DetectionRule saved = detectionRuleRepository.save(rule);
+        createdRuleIds.add(saved.getId());
+        return saved;
     }
 
     private User persistUser() {
@@ -220,7 +295,9 @@ class RiskScorePersistenceIntegrationTest {
         user.setEmail("it-riskscore-user-" + suffix + "@example.invalid");
         user.setPasswordHash("integration-test-placeholder-hash");
         user.setFullName("Integration Test User");
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+        createdUserIds.add(saved.getId());
+        return saved;
     }
 
     private EndpointDevice persistEndpoint() {
@@ -228,7 +305,9 @@ class RiskScorePersistenceIntegrationTest {
         endpoint.setHostname("IT-RISKSCORE-ENDPOINT-" + UUID.randomUUID());
         endpoint.setMacAddress(randomMacAddress());
         endpoint.setAgentTokenHash(randomHex(64));
-        return endpointDeviceRepository.save(endpoint);
+        EndpointDevice saved = endpointDeviceRepository.save(endpoint);
+        createdEndpointIds.add(saved.getId());
+        return saved;
     }
 
     /** Persists {@code count} AuthFailureEvent rows for {@code user}, all
