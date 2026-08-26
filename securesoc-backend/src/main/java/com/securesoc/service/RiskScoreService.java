@@ -1,6 +1,7 @@
 package com.securesoc.service;
 
 import com.securesoc.detection.DetectionResult;
+import com.securesoc.dto.RiskScoreResponse;
 import com.securesoc.entity.DetectionRule;
 import com.securesoc.entity.EndpointDevice;
 import com.securesoc.entity.RiskScore;
@@ -10,6 +11,7 @@ import com.securesoc.repository.RiskScoreRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,9 +23,13 @@ import java.util.UUID;
  *   <li>Reads/writes {@link RiskScoreRepository} and {@link EndpointDeviceRepository}
  *       only - no new repository methods, no new entity fields (no
  *       {@code @Version}), no migration.</li>
- *   <li>Not wired into {@link com.securesoc.detection.DetectionEngine} yet -
- *       that wiring, the controller/DTO layer, and the integration test are
- *       Checkpoint B.</li>
+ *   <li>Wired into {@link com.securesoc.detection.DetectionEngine} as of
+ *       Checkpoint B (see {@code DetectionEngineTest},
+ *       {@code RiskScorePersistenceIntegrationTest}). The read methods below
+ *       ({@link #getAll()}, {@link #getForEndpoint(UUID)}) and
+ *       {@code RiskScoreController}/{@code RiskScoreResponse} are
+ *       Checkpoint C - read-only exposure of already-persisted scores, no
+ *       change to {@link #recordDetection} or the scoring formula.</li>
  * </ul>
  *
  * Design decisions (approved proposal - see project risk-engine design doc;
@@ -116,6 +122,47 @@ public class RiskScoreService {
         riskScore.setLevel(levelFor(updatedScore));
 
         return Optional.of(riskScoreRepository.save(riskScore));
+    }
+
+    /**
+     * Returns every persisted {@link RiskScore}, ordered by score descending
+     * (highest-risk endpoints first) - backs {@code GET /risk-scores}.
+     * Read-only; never creates a row. An endpoint with no detections yet
+     * simply has no row and is absent from this list (see class javadoc:
+     * this checkpoint deliberately does not synthesize a default
+     * SAFE/0 entry for endpoints that have never been scored).
+     */
+    @Transactional(readOnly = true)
+    public List<RiskScoreResponse> getAll() {
+        return riskScoreRepository.findAllByOrderByScoreDesc().stream()
+            .map(RiskScoreService::toResponse)
+            .toList();
+    }
+
+    /**
+     * Returns the persisted {@link RiskScore} for one endpoint - backs
+     * {@code GET /risk-scores/{endpointId}}. Read-only; never creates a row.
+     *
+     * @throws ResourceNotFoundException if {@code endpointId} has no
+     *         persisted {@code RiskScore} row (never detected against, or
+     *         the endpoint itself doesn't exist) - deliberately not
+     *         distinguished from each other, and deliberately not masked
+     *         by a synthetic SAFE/0 response (see class javadoc).
+     */
+    @Transactional(readOnly = true)
+    public RiskScoreResponse getForEndpoint(UUID endpointId) {
+        return riskScoreRepository.findByEndpoint_Id(endpointId)
+            .map(RiskScoreService::toResponse)
+            .orElseThrow(() -> new ResourceNotFoundException("RiskScore not found for endpoint: " + endpointId));
+    }
+
+    static RiskScoreResponse toResponse(RiskScore r) {
+        return new RiskScoreResponse(
+            r.getEndpoint().getId(),
+            r.getScore(),
+            r.getLevel().name(),
+            r.getUpdatedAt()
+        );
     }
 
     private RiskScore newRiskScoreFor(UUID endpointId) {

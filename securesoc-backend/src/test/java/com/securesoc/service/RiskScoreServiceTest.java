@@ -1,6 +1,7 @@
 package com.securesoc.service;
 
 import com.securesoc.detection.DetectionResult;
+import com.securesoc.dto.RiskScoreResponse;
 import com.securesoc.entity.DetectionRule;
 import com.securesoc.entity.EndpointDevice;
 import com.securesoc.entity.RiskScore;
@@ -17,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -340,5 +342,84 @@ class RiskScoreServiceTest {
 
         assertTrue(result.isPresent());
         assertTrue(result.get().getScore() >= 0);
+    }
+
+    // =====================================================================
+    // getAll() (Checkpoint C - read-only exposure, GET /risk-scores)
+    // =====================================================================
+
+    @Test
+    void getAll_noRows_returnsEmptyList() {
+        when(riskScoreRepository.findAllByOrderByScoreDesc()).thenReturn(List.of());
+
+        List<RiskScoreResponse> result = riskScoreService.getAll();
+
+        assertTrue(result.isEmpty());
+        verifyNoInteractions(endpointDeviceRepository);
+    }
+
+    @Test
+    void getAll_returnsRowsMappedInRepositoryOrder() {
+        // findAllByOrderByScoreDesc() is trusted to already apply the DB-level
+        // ORDER BY - this test verifies getAll() preserves whatever order the
+        // repository returns and maps every field correctly. It deliberately
+        // does NOT re-sort the mocked list itself: if getAll() were changed to
+        // re-sort (or to call a different, unordered repository method), this
+        // test would still pass as long as mapping is correct, which is why
+        // the two rows below are supplied already in descending-score order,
+        // matching what the real repository method contractually returns.
+        UUID endpointIdB = UUID.randomUUID();
+        EndpointDevice endpointB = new EndpointDevice();
+        endpointB.setId(endpointIdB);
+
+        RiskScore highest = riskScoreWith((short) 80, RiskScore.Level.CRITICAL);
+        RiskScore lowest = new RiskScore();
+        lowest.setEndpoint(endpointB);
+        lowest.setScore((short) 10);
+        lowest.setLevel(RiskScore.Level.LOW);
+
+        when(riskScoreRepository.findAllByOrderByScoreDesc()).thenReturn(List.of(highest, lowest));
+
+        List<RiskScoreResponse> result = riskScoreService.getAll();
+
+        assertEquals(2, result.size());
+        assertEquals(endpointId, result.get(0).endpointId());
+        assertEquals((short) 80, result.get(0).score());
+        assertEquals("CRITICAL", result.get(0).level());
+        assertEquals(highest.getUpdatedAt(), result.get(0).updatedAt());
+        assertEquals(endpointIdB, result.get(1).endpointId());
+        assertEquals((short) 10, result.get(1).score());
+        assertEquals("LOW", result.get(1).level());
+        verifyNoInteractions(endpointDeviceRepository);
+    }
+
+    // =====================================================================
+    // getForEndpoint() (Checkpoint C - read-only exposure, GET /risk-scores/{id})
+    // =====================================================================
+
+    @Test
+    void getForEndpoint_found_mapsFieldsCorrectly() {
+        RiskScore existing = riskScoreWith((short) 45, RiskScore.Level.HIGH);
+        when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.of(existing));
+
+        RiskScoreResponse result = riskScoreService.getForEndpoint(endpointId);
+
+        assertEquals(endpointId, result.endpointId());
+        assertEquals((short) 45, result.score());
+        assertEquals("HIGH", result.level());
+        assertEquals(existing.getUpdatedAt(), result.updatedAt());
+        verifyNoInteractions(endpointDeviceRepository);
+    }
+
+    @Test
+    void getForEndpoint_missingRow_throwsResourceNotFoundException() {
+        // No synthetic SAFE/0 fallback - a missing row is a 404, not a
+        // default response. See RiskScoreService.getForEndpoint javadoc.
+        when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class,
+            () -> riskScoreService.getForEndpoint(endpointId));
+
+        verifyNoInteractions(endpointDeviceRepository);
     }
 }
