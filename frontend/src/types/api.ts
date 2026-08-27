@@ -12,15 +12,18 @@
  *     real controllers/services (AuthController, EndpointController,
  *     MonitoringController's GET endpoints, DepartmentController,
  *     LaboratoryController, and WebSocketEndpointEventPublisher for
- *     EndpointStatusEvent specifically).
- *   - AlertResponse, RiskScoreResponse: still CONTRACT-FIRST types only -
- *     there is no AlertController, RiskController, Alert entity, or
- *     risk-scoring engine on the backend yet. These shapes exist so the
- *     frontend and future backend agree on the contract in advance;
- *     nothing currently returns this data from a real endpoint. See
- *     frontend/src/api/dashboardApi.ts, which deliberately always serves
- *     these from mocks/data.ts regardless of VITE_USE_MOCKS until that
- *     backend work lands.
+ *     EndpointStatusEvent specifically), and (as of Checkpoint C)
+ *     RiskScoreResponse: a real RiskScoreController/RiskScoreService
+ *     exist on the backend (GET /risk-scores, GET /risk-scores/{id}).
+ *   - AlertResponse: still CONTRACT-FIRST only - there is no
+ *     AlertController or Alert-side REST exposure on the backend yet
+ *     (RiskScore and Alert are separate persistence paths off the same
+ *     DetectionEngine; only RiskScore has been exposed via REST so far).
+ *     This shape exists so the frontend and future backend agree on the
+ *     contract in advance; nothing currently returns this data from a
+ *     real endpoint. See frontend/src/api/dashboardApi.ts, which
+ *     deliberately always serves it from mocks/data.ts regardless of
+ *     VITE_USE_MOCKS until that backend work lands.
  */
 
 export interface AuthResponse {
@@ -95,8 +98,9 @@ export interface AlertResponse {
 
 export type RiskLevel = 'SAFE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
 
-/** CONTRACT-FIRST: no backend RiskController/risk-scoring engine exists
- * yet - see header comment above. */
+/** Real backend as of Checkpoint C: mirrors
+ * com.securesoc.dto.RiskScoreResponse exactly (GET /risk-scores,
+ * GET /risk-scores/{endpointId} - RiskScoreController). */
 export interface RiskScoreResponse {
   endpointId: string;
   score: number;

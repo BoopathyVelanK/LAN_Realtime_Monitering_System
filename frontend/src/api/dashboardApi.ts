@@ -85,14 +85,16 @@ function getMockLaboratories() {
 //     add getLoginEvents/getLogoutEvents here first if a page needs them.
 //   - GET /departments              EXISTS (DepartmentController)
 //   - GET /laboratories             EXISTS (LaboratoryController)
-//   - /alerts, /risk/*              DOES NOT EXIST YET (Phase 4 detection
-//     engine). AlertResponse/RiskScoreResponse in types/api.ts are
-//     contract-first types with nothing behind them.
-// Every method below except getAlerts/getRiskScore/getAllRiskScores/
-// acknowledgeAlert/resolveAlert respects USE_MOCKS, since their backend is
-// real. Those five do NOT - they always return mock data regardless of
-// USE_MOCKS, since calling httpClient for them would 404 against a real
-// backend.
+//   - GET /risk-scores, /risk-scores/{id} EXISTS (RiskScoreController,
+//     Checkpoint C) - getRiskScore/getAllRiskScores below respect
+//     USE_MOCKS like getEndpoints now that this backend is real.
+//   - /alerts                       DOES NOT EXIST YET (Phase 4 detection
+//     engine, Alert side). AlertResponse in types/api.ts is still a
+//     contract-first type with nothing behind it.
+// Every method below except getAlerts/acknowledgeAlert/resolveAlert
+// respects USE_MOCKS, since their backend is real. Those three do NOT -
+// they always return mock data regardless of USE_MOCKS, since calling
+// httpClient for them would 404 against a real backend.
 // -----------------------------------------------------------------------
 
 function buildQuery(params?: MonitoringListParams): string {
@@ -118,13 +120,25 @@ export const dashboardApi = {
       ),
     ),
 
-  /** MOCK ONLY - no backend /risk/{id} endpoint exists yet. See file header. */
+  /** Real backend as of Checkpoint C (RiskScoreController) - respects
+   * USE_MOCKS like getEndpoints. A missing RiskScore row (endpoint never
+   * detected against) is a 404 from the real backend, same as any other
+   * not-found case - this is intentionally not masked with a synthetic
+   * SAFE/0 fallback here; callers see the rejected promise. */
   getRiskScore: (endpointId: string): Promise<RiskScoreResponse> =>
-    Promise.resolve(getMockRisk().find((r) => r.endpointId === endpointId)!),
+    USE_MOCKS
+      ? Promise.resolve(getMockRisk().find((r) => r.endpointId === endpointId)!)
+      : httpClient.get(`/risk-scores/${endpointId}`).then((r) => r.data),
 
-  /** MOCK ONLY - no backend /risk/{id} endpoint exists yet. See file header. */
+  /** Real backend as of Checkpoint C (RiskScoreController) - respects
+   * USE_MOCKS like getEndpoints. The `_endpoints` param is unused in both
+   * branches (mock generation and the real endpoint both derive the full
+   * set server/mock-side); kept only to avoid changing this function's
+   * signature and rippling into its one call site (useRiskScores). */
   getAllRiskScores: (_endpoints: EndpointSummaryResponse[]): Promise<RiskScoreResponse[]> =>
-    Promise.resolve(getMockRisk()),
+    USE_MOCKS
+      ? Promise.resolve(getMockRisk())
+      : httpClient.get('/risk-scores').then((r) => r.data),
 
   /** MOCK ONLY - no backend /alerts/{id}/acknowledge endpoint exists yet. */
   acknowledgeAlert: (id: string, _comment?: string): Promise<AlertResponse> =>
