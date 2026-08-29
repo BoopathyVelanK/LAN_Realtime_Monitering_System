@@ -1,16 +1,18 @@
 package com.securesoc.service;
 
+import com.securesoc.detection.DetectionContext;
+import com.securesoc.detection.DetectionEngine;
 import com.securesoc.dto.AuthResponse;
-import com.securesoc.entity.AuthFailureEvent;
 import com.securesoc.entity.RefreshToken;
 import com.securesoc.entity.User;
 import com.securesoc.exception.AccountLockedException;
 import com.securesoc.exception.UnauthorizedException;
-import com.securesoc.repository.AuthFailureEventRepository;
 import com.securesoc.repository.RefreshTokenRepository;
 import com.securesoc.repository.UserRepository;
 import com.securesoc.security.JwtService;
 import com.securesoc.security.TokenHasher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,29 +23,34 @@ import java.util.List;
 @Service
 public class AuthService {
 
-    // Locks an account for 5 minutes after 5 consecutive failed attempts -
-    // mirrors the same protection the agent's registration secret doesn't
-    // need (that's a shared machine secret, not a per-human account) but a
-    // human login absolutely does.
-    private static final int MAX_FAILED_ATTEMPTS = 5;
-    private static final long LOCKOUT_MINUTES = 5;
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+
+    // Failed-attempt counting, lockout, and AuthFailureEvent persistence now
+    // live in AuthFailureRecorder (Checkpoint E) - see that class for the
+    // MAX_FAILED_ATTEMPTS/LOCKOUT_MINUTES constants and the REQUIRES_NEW
+    // rationale (this method's own transaction is about to be rolled back
+    // by the UnauthorizedException thrown right after, and that write must
+    // survive it).
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final AuthFailureEventRepository authFailureEventRepository;
+    private final AuthFailureRecorder authFailureRecorder;
+    private final DetectionEngine detectionEngine;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
     public AuthService(
         UserRepository userRepository,
         RefreshTokenRepository refreshTokenRepository,
-        AuthFailureEventRepository authFailureEventRepository,
+        AuthFailureRecorder authFailureRecorder,
+        DetectionEngine detectionEngine,
         PasswordEncoder passwordEncoder,
         JwtService jwtService
     ) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
-        this.authFailureEventRepository = authFailureEventRepository;
+        this.authFailureRecorder = authFailureRecorder;
+        this.detectionEngine = detectionEngine;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
     }
@@ -71,7 +78,37 @@ public class AuthService {
         }
 
         if (!passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
-            registerFailedAttempt(user, sourceIp);
+            // Checkpoint E: authFailureRecorder.recordFailure(...) runs in
+            // its own REQUIRES_NEW transaction and has already committed
+            // the counter/lockout/AuthFailureEvent write by the time this
+            // call returns - independent of this method's own transaction,
+            // which is about to be rolled back by the UnauthorizedException
+            // thrown below (default rollback rule for unchecked exceptions).
+            // See AuthFailureRecorder's Javadoc for the full rationale.
+            DetectionContext context = authFailureRecorder.recordFailure(user.getId(), sourceIp);
+
+            // Detection runs AFTER that commit, deliberately not inside
+            // AuthFailureRecorder's own transactional method: DetectionEngine
+            // .evaluate() is itself @Transactional and would otherwise join
+            // (not replace) that same REQUIRES_NEW transaction, so any
+            // exception surfacing from it would mark that shared transaction
+            // rollback-only - undoing the very counter/lockout/event write
+            // this wiring exists to preserve. Calling it here instead, after
+            // that transaction has already committed, means a detection
+            // failure can only affect detection: it never threatens the
+            // already-durable failed-attempt bookkeeping, and (via the
+            // catch below) never changes the UnauthorizedException the
+            // caller is about to receive.
+            if (context != null) {
+                try {
+                    detectionEngine.evaluate(context);
+                } catch (RuntimeException detectionFailure) {
+                    log.error("Detection engine failed while evaluating an AUTH_FAILURE event for user {}. "
+                        + "The failed-attempt counter, lockout, and AuthFailureEvent record were already "
+                        + "committed and are unaffected.", user.getId(), detectionFailure);
+                }
+            }
+
             throw new UnauthorizedException("Invalid username/email or password");
         }
 
@@ -108,25 +145,6 @@ public class AuthService {
             token.setRevokedAt(Instant.now());
             refreshTokenRepository.save(token);
         });
-    }
-
-    /** Unchanged counter/lockout logic, PLUS (new) one AuthFailureEvent row
-     * per call - see V5__phase4_detection_foundation.sql and
-     * AuthFailureEvent's Javadoc for why. Fires on exactly the same
-     * condition this method already fired on before (wrong password for a
-     * known, unlocked, enabled user) - no new trigger paths added. */
-    private void registerFailedAttempt(User user, String sourceIp) {
-        int attempts = user.getFailedLoginAttempts() + 1;
-        user.setFailedLoginAttempts(attempts);
-        if (attempts >= MAX_FAILED_ATTEMPTS) {
-            user.setLockedUntil(Instant.now().plusSeconds(LOCKOUT_MINUTES * 60));
-        }
-        userRepository.save(user);
-
-        AuthFailureEvent event = new AuthFailureEvent();
-        event.setUser(user);
-        event.setSourceIp(sourceIp);
-        authFailureEventRepository.save(event);
     }
 
     private AuthResponse issueTokens(User user) {
