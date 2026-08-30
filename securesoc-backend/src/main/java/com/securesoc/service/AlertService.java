@@ -14,8 +14,14 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.securesoc.dto.AlertResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 /**
  * Converts a detected {@link DetectionResult} into a persisted {@link Alert}.
@@ -164,5 +170,91 @@ public class AlertService {
      * shared enum type, since that's a bigger change than this task's scope. */
     private static Alert.Severity mapSeverity(DetectionRule.Severity severity) {
         return severity == null ? null : Alert.Severity.valueOf(severity.name());
+    }
+
+    @Transactional(readOnly = true)
+    public List<AlertResponse> getAlerts(UUID endpointId, String statusStr) {
+        Alert.Status status = null;
+        if (statusStr != null && !statusStr.isBlank()) {
+            try {
+                status = Alert.Status.valueOf(statusStr.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return List.of();
+            }
+        }
+
+        Pageable limit = PageRequest.of(0, 100);
+        Page<Alert> page;
+        if (endpointId != null && status != null) {
+            page = alertRepository.findByEndpoint_IdAndStatusOrderByCreatedAtDesc(endpointId, status, limit);
+        } else if (endpointId != null) {
+            page = alertRepository.findByEndpoint_IdOrderByCreatedAtDesc(endpointId, limit);
+        } else if (status != null) {
+            page = alertRepository.findByStatusOrderByCreatedAtDesc(status, limit);
+        } else {
+            page = alertRepository.findAllByOrderByCreatedAtDesc(limit);
+        }
+        return page.stream().map(AlertService::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public AlertResponse getAlertById(UUID id) {
+        return alertRepository.findById(id)
+            .map(AlertService::toResponse)
+            .orElseThrow(() -> new ResourceNotFoundException("Alert not found: " + id));
+    }
+
+    @Transactional
+    public AlertResponse acknowledgeAlert(UUID id, UUID userId) {
+        Alert alert = alertRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Alert not found: " + id));
+
+        if (alert.getStatus() == Alert.Status.OPEN) {
+            User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+            alert.setStatus(Alert.Status.ACKNOWLEDGED);
+            alert.setAcknowledgedBy(user);
+            alert.setAcknowledgedAt(Instant.now());
+            alert = alertRepository.save(alert);
+        }
+        return toResponse(alert);
+    }
+
+    @Transactional
+    public AlertResponse resolveAlert(UUID id) {
+        Alert alert = alertRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Alert not found: " + id));
+
+        if (alert.getStatus() != Alert.Status.RESOLVED) {
+            alert.setStatus(Alert.Status.RESOLVED);
+            alert.setResolvedAt(Instant.now());
+            alert = alertRepository.save(alert);
+        }
+        return toResponse(alert);
+    }
+
+    static AlertResponse toResponse(Alert alert) {
+        String category = alert.getRule() != null ? alert.getRule().getEventSource() : "UNKNOWN";
+        Instant updatedAt = alert.getResolvedAt() != null ? alert.getResolvedAt() :
+                           (alert.getAcknowledgedAt() != null ? alert.getAcknowledgedAt() : alert.getCreatedAt());
+
+        return new AlertResponse(
+            alert.getId(),
+            alert.getEndpoint() != null ? alert.getEndpoint().getId() : null,
+            alert.getEndpoint() != null ? alert.getEndpoint().getHostname() : null,
+            category,
+            alert.getSeverity() != null ? alert.getSeverity().name() : null,
+            alert.getTitle(),
+            alert.getDescription(),
+            alert.getStatus() != null ? alert.getStatus().name() : null,
+            null, // assignedToUserId
+            null, // assignedToUsername
+            alert.getAcknowledgedBy() != null ? alert.getAcknowledgedBy().getId() : null,
+            alert.getAcknowledgedBy() != null ? alert.getAcknowledgedBy().getUsername() : null,
+            alert.getAcknowledgedAt(),
+            alert.getCreatedAt(),
+            updatedAt,
+            alert.getResolvedAt()
+        );
     }
 }

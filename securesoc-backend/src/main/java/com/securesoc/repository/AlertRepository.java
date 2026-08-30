@@ -16,6 +16,8 @@ public interface AlertRepository extends JpaRepository<Alert, UUID> {
 
     Page<Alert> findByEndpoint_IdOrderByCreatedAtDesc(UUID endpointId, Pageable pageable);
 
+    Page<Alert> findByEndpoint_IdAndStatusOrderByCreatedAtDesc(UUID endpointId, Alert.Status status, Pageable pageable);
+
     /**
      * Alert deduplication lookup (see V8__add_alert_open_dedup_index.sql).
      * Deliberately keyed on (user_id, rule_id, status) only - endpoint_id
