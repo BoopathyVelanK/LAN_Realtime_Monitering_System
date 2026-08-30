@@ -12,4 +12,6 @@ public interface UsbEventRepository extends JpaRepository<UsbEvent, UUID> {
     Page<UsbEvent> findAllByOrderByEventTimeDesc(Pageable pageable);
 
     Page<UsbEvent> findByEndpoint_IdOrderByEventTimeDesc(UUID endpointId, Pageable pageable);
+
+    long countByEndpoint_IdAndEventTimeAfter(UUID endpointId, java.time.Instant since);
 }
