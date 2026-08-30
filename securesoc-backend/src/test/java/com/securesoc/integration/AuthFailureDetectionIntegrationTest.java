@@ -18,8 +18,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.transaction.TestTransaction;
-import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -42,11 +40,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * .evaluate()} -&gt; {@code AlertService}/{@code RiskScoreService} - driven
  * through the real, Spring-wired {@link AuthService#login} entry point
  * against a real PostgreSQL instance (Testcontainers), not a hand-built
- * {@code DetectionContext} and not H2. Follows the same
- * container/fixture-commit/cleanup conventions as
- * {@code RiskScorePersistenceIntegrationTest} and
- * {@code AlertPersistenceIntegrationTest} (see those classes' javadoc for
- * the full rationale, which applies unchanged here).
+ * {@code DetectionContext} and not H2.
+ *
+ * Deliberately does NOT use the ambient-{@code @Transactional}-test
+ * fixture-commit convention that {@code RiskScorePersistenceIntegrationTest}
+ * and {@code AlertPersistenceIntegrationTest} use: those classes call
+ * {@code DetectionEngine.evaluate()} directly and it never throws in their
+ * exercised path, so wrapping the whole test method in one ambient
+ * transaction is harmless there. This class instead drives the real
+ * {@code AuthService.login()} entry point repeatedly, and {@code login()}
+ * unconditionally throws {@code UnauthorizedException} on every failed
+ * attempt - if that call ran inside an ambient test transaction it would
+ * merely join (not own) it, and Spring's default rollback rule would mark
+ * that shared transaction rollback-only on the very first iteration,
+ * corrupting every call and read after it (this is exactly what happened
+ * before this fix: every AuthFailureEvent read back as missing, and
+ * cleanup's attempt to commit the poisoned transaction threw
+ * UnexpectedRollbackException). This class has no class-level
+ * {@code @Transactional} for exactly this reason: each {@code login()} call
+ * below owns its own transaction, exactly as it does for a real HTTP
+ * request, and every fixture/read/cleanup repository call likewise runs in
+ * its own short-lived, independently committing transaction.
  *
  * This class specifically exercises two things neither of those classes
  * covers, because both predate Checkpoint E and call
@@ -75,7 +89,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Testcontainers
 @SpringBootTest
-@Transactional
 class AuthFailureDetectionIntegrationTest {
 
     @Container
@@ -115,10 +128,9 @@ class AuthFailureDetectionIntegrationTest {
     private static final String WRONG_PASSWORD = "definitely-wrong-password";
     private static final String SOURCE_IP = "203.0.113.10";
 
-    // Same rationale as RiskScorePersistenceIntegrationTest: commitFixtures()
-    // permanently commits these rows, so they must be tracked and explicitly
-    // deleted in @AfterEach rather than relying on the test's own
-    // @Transactional rollback, which never covers them.
+    // With no ambient test transaction, each repository write below commits
+    // on its own (see class javadoc), so created rows are durable
+    // immediately and must be tracked and explicitly deleted in @AfterEach.
     private final Set<UUID> createdRuleIds = new LinkedHashSet<>();
     private final Set<UUID> createdUserIds = new LinkedHashSet<>();
 
@@ -126,7 +138,7 @@ class AuthFailureDetectionIntegrationTest {
     void fiveFailedLogins_reachThreshold_persistAllEventsDurably_andCreateOneAlert_butNoRiskScore() {
         DetectionRule rule = persistRule();
         User user = persistUser();
-        commitFixtures();
+        assertFixtureUserIsFindable(user);
 
         long riskScoreCountBefore = riskScoreRepository.count();
 
@@ -168,7 +180,7 @@ class AuthFailureDetectionIntegrationTest {
     void fewerThanThresholdFailedLogins_persistEventsDurably_butCreateNoAlert() {
         DetectionRule rule = persistRule();
         User user = persistUser();
-        commitFixtures();
+        assertFixtureUserIsFindable(user);
 
         int belowThreshold = THRESHOLD - 1;
         for (int i = 0; i < belowThreshold; i++) {
@@ -196,7 +208,7 @@ class AuthFailureDetectionIntegrationTest {
     void successfulLoginAfterFailures_clearsCounterAndLockout_createsNoNewAlert() {
         DetectionRule rule = persistRule();
         User user = persistUser();
-        commitFixtures();
+        assertFixtureUserIsFindable(user);
 
         assertThrows(UnauthorizedException.class,
             () -> authService.login(user.getUsername(), WRONG_PASSWORD, SOURCE_IP));
@@ -217,34 +229,32 @@ class AuthFailureDetectionIntegrationTest {
     }
 
     // =====================================================================
-    // Cleanup (mirrors RiskScorePersistenceIntegrationTest's convention)
+    // Cleanup
     // =====================================================================
 
+    /**
+     * With no ambient test transaction (see class javadoc), each repository
+     * call below is its own independently committing operation - unlike the
+     * TestTransaction-based cleanup this class used previously, there is no
+     * shared transaction here that could be rollback-only, so this cleanup
+     * cannot throw UnexpectedRollbackException the way the prior version did.
+     * Order matters only for FK safety: alerts and auth-failure events (which
+     * reference the user/rule) are deleted before the user and rule rows
+     * themselves.
+     */
     @AfterEach
     void cleanUpCommittedFixtures() {
-        if (!TestTransaction.isActive()) {
-            TestTransaction.start();
-        }
-
         alertRepository.findAll().stream()
             .filter(a -> (a.getUser() != null && createdUserIds.contains(a.getUser().getId()))
                 || (a.getRule() != null && createdRuleIds.contains(a.getRule().getId())))
             .forEach(alertRepository::delete);
-        alertRepository.flush();
 
         authFailureEventRepository.findAll().stream()
             .filter(event -> event.getUser() != null && createdUserIds.contains(event.getUser().getId()))
             .forEach(authFailureEventRepository::delete);
-        authFailureEventRepository.flush();
 
         createdUserIds.forEach(userRepository::deleteById);
-        userRepository.flush();
-
         createdRuleIds.forEach(detectionRuleRepository::deleteById);
-        detectionRuleRepository.flush();
-
-        TestTransaction.flagForCommit();
-        TestTransaction.end();
 
         createdRuleIds.clear();
         createdUserIds.clear();
@@ -254,14 +264,26 @@ class AuthFailureDetectionIntegrationTest {
     // Helpers
     // =====================================================================
 
-    /** Same rationale as RiskScorePersistenceIntegrationTest.commitFixtures():
-     * a later Propagation.REQUIRES_NEW call (AuthFailureRecorder.recordFailure,
-     * and transitively AlertInsertExecutor.insertAlert) needs these fixtures
-     * to already be committed and visible in its own, separate transaction. */
-    private void commitFixtures() {
-        TestTransaction.flagForCommit();
-        TestTransaction.end();
-        TestTransaction.start();
+    /**
+     * Positively confirms the fixture user resolves via the exact same
+     * {@code UserRepository.findByUsernameOrEmail} lookup
+     * {@code AuthService.login()} itself uses, before the failed-login loop
+     * runs. This is a deliberate diagnostic/regression guard: {@code login()}
+     * throws the identical {@code UnauthorizedException} type and message
+     * from both its "unknown user" branch and its "wrong password" branch,
+     * so {@code assertThrows(UnauthorizedException.class, ...)} alone cannot
+     * tell them apart. Without this check, a lookup failure for any reason
+     * would make every {@code assertThrows} below misleadingly pass while
+     * {@code AuthFailureRecorder} is silently never invoked at all - which
+     * is indistinguishable, from the test's other assertions alone, from the
+     * transaction-topology bug this class was rewritten to avoid. Calls only
+     * the existing, unmodified {@code UserRepository} default method - no
+     * production behavior is changed by this check.
+     */
+    private void assertFixtureUserIsFindable(User user) {
+        assertTrue(userRepository.findByUsernameOrEmail(user.getUsername()).isPresent(),
+            "Fixture user must be resolvable by AuthService.login()'s own lookup "
+                + "before exercising the failed-login loop");
     }
 
     private List<Alert> allAlertsFor(UUID userId, UUID ruleId) {
@@ -299,3 +321,4 @@ class AuthFailureDetectionIntegrationTest {
         return saved;
     }
 }
+
