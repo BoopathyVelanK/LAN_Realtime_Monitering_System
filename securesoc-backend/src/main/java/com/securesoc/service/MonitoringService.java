@@ -1,5 +1,7 @@
 package com.securesoc.service;
 
+import com.securesoc.detection.DetectionContext;
+import com.securesoc.detection.DetectionEngine;
 import com.securesoc.dto.PageResponse;
 import com.securesoc.dto.monitoring.*;
 import com.securesoc.entity.*;
@@ -40,6 +42,7 @@ public class MonitoringService {
     private final IdleEventRepository idleEventRepository;
     private final NetworkUsageEventRepository networkUsageEventRepository;
     private final InternetUsageEventRepository internetUsageEventRepository;
+    private final DetectionEngine detectionEngine;
 
     public MonitoringService(
         LoginEventRepository loginEventRepository,
@@ -49,7 +52,8 @@ public class MonitoringService {
         VpnEventRepository vpnEventRepository,
         IdleEventRepository idleEventRepository,
         NetworkUsageEventRepository networkUsageEventRepository,
-        InternetUsageEventRepository internetUsageEventRepository
+        InternetUsageEventRepository internetUsageEventRepository,
+        DetectionEngine detectionEngine
     ) {
         this.loginEventRepository = loginEventRepository;
         this.logoutEventRepository = logoutEventRepository;
@@ -59,6 +63,7 @@ public class MonitoringService {
         this.idleEventRepository = idleEventRepository;
         this.networkUsageEventRepository = networkUsageEventRepository;
         this.internetUsageEventRepository = internetUsageEventRepository;
+        this.detectionEngine = detectionEngine;
     }
 
     // -----------------------------------------------------------------
@@ -125,7 +130,17 @@ public class MonitoringService {
             }
         }
 
-        usbEventRepository.save(event);
+        usbEventRepository.saveAndFlush(event);
+
+        DetectionContext context = new DetectionContext(
+            "USB_EVENT",
+            device.getId(),
+            null,
+            event.getEventTime(),
+            event
+        );
+        detectionEngine.evaluate(context);
+
         return MonitoringIngestResponse.ok("USB event recorded.");
     }
 

@@ -1,5 +1,6 @@
 package com.securesoc.entity;
 
+import com.securesoc.detection.DetectionEvent;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -17,7 +18,7 @@ import java.util.UUID;
 @Getter
 @Setter
 @NoArgsConstructor
-public class UsbEvent {
+public class UsbEvent implements DetectionEvent {
 
     public enum Action { CONNECTED, DISCONNECTED }
 
