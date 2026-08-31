@@ -113,10 +113,38 @@ class UsbEventDetectionIntegrationTest {
             .toList();
             
         assertEquals(1, alerts.size(), "Threshold met on the 3rd attempt - exactly one Alert expected");
-        assertEquals(Alert.Status.OPEN, alerts.get(0).getStatus());
+        Alert alert = alerts.get(0);
+        assertEquals(Alert.Status.OPEN, alert.getStatus());
+        assertEquals(Alert.Severity.HIGH, alert.getSeverity(), "Alert severity must match the DetectionRule");
+        assertEquals(rule.getId(), alert.getRule().getId(), "Alert must reference the correct rule");
+        assertEquals(endpoint.getId(), alert.getEndpoint().getId(), "Alert must reference the correct endpoint");
 
-        // Verify that RiskScore is updated
-        assertEquals(riskScoreCountBefore + 1, riskScoreRepository.count(), "A new RiskScore should be created for this endpoint.");
+        // Verify that RiskScore is updated appropriately
+        var riskScoreOpt = riskScoreRepository.findByEndpoint_Id(endpoint.getId());
+        assertTrue(riskScoreOpt.isPresent(), "A new RiskScore should be created for this endpoint.");
+        var riskScore = riskScoreOpt.get();
+        assertEquals(endpoint.getId(), riskScore.getEndpoint().getId(), "RiskScore must reference the correct endpoint");
+        assertEquals(30, riskScore.getScore(), "Score should be 30 for one HIGH severity detection");
+
+        // Prove that endpoint-only events (user == null) bypass deduplication
+        for (int i = 0; i < THRESHOLD; i++) {
+            mockMvc.perform(post("/monitoring/usb")
+                    .servletPath("/monitoring/usb")
+                    .header("X-Agent-Token", AGENT_TOKEN)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(payload))
+                .andExpect(status().isOk());
+        }
+
+        alerts = alertRepository.findAll().stream()
+            .filter(a -> a.getEndpoint() != null && endpoint.getId().equals(a.getEndpoint().getId()))
+            .filter(a -> a.getRule() != null && rule.getId().equals(a.getRule().getId()))
+            .toList();
+
+        assertEquals(4, alerts.size(), "Even for the same rule and endpoint, subsequent detections create new Alerts because userId is null");
+
+        riskScoreOpt = riskScoreRepository.findByEndpoint_Id(endpoint.getId());
+        assertEquals(100, riskScoreOpt.get().getScore(), "RiskScore should accumulate 30 * 4 = 120, clamped to 100");
     }
 
     @AfterEach

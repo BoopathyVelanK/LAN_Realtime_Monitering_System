@@ -170,6 +170,15 @@ class AuthFailureDetectionIntegrationTest {
         assertEquals(1, alerts.size(), "Threshold met on the 5th attempt - exactly one Alert expected");
         assertEquals(Alert.Status.OPEN, alerts.get(0).getStatus());
 
+        // Prove that deduplication prevents repeated OPEN alerts for the same (user, rule)
+        for (int i = 0; i < THRESHOLD; i++) {
+            assertThrows(com.securesoc.exception.AccountLockedException.class,
+                () -> authService.login(user.getUsername(), WRONG_PASSWORD, SOURCE_IP));
+        }
+
+        alerts = allAlertsFor(user.getId(), rule.getId());
+        assertEquals(1, alerts.size(), "Even after reaching the threshold again, exactly one OPEN Alert must exist due to deduplication");
+
         // Finding A: endpointId is always null for a portal-login detection,
         // so RiskScoreService.recordDetection() is a no-op end-to-end here.
         assertEquals(riskScoreCountBefore, riskScoreRepository.count(),
