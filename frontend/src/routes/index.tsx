@@ -5,7 +5,7 @@ import {
   AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
   BarChart, Bar, PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { useEndpoints } from "@/api/queries";
+import { useEndpoints, useAlerts, useRiskScores } from "@/api/queries";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [{ title: "SecureSOC — Dashboard" }] }),
@@ -37,13 +37,6 @@ const cpuSeries = Array.from({ length: 12 }, (_, i) => ({
   ram: Math.round(40 + Math.random() * 35),
 }));
 
-const riskPie = [
-  { name: "Low", value: 243, color: "var(--muted-foreground)" },
-  { name: "Medium", value: 87, color: "#c08a3e" },
-  { name: "High", value: 12, color: "var(--critical)" },
-  { name: "Critical", value: 4, color: "var(--primary)" },
-];
-
 const recentEvents = [
   { ts: "14:02:11", host: "LAB-PC-17", user: "student_42", type: "Unauthorized USB Inserted", sev: "CRITICAL" as const },
   { ts: "13:58:44", host: "LAB-PC-22", user: "student_11", type: "Idle > 30m (Critical Idle)", sev: "HIGH" as const },
@@ -53,11 +46,34 @@ const recentEvents = [
 ];
 
 function Dashboard() {
-  // Real data - GET /endpoints exists on the backend (EndpointController).
   const { data: endpoints, isLoading: endpointsLoading } = useEndpoints();
+  const { data: alerts, isLoading: alertsLoading } = useAlerts();
+  const { data: riskScores, isLoading: riskLoading } = useRiskScores(endpoints);
+
   const total = endpoints?.length ?? 0;
   const online = endpoints?.filter((e) => e.status === "ONLINE").length ?? 0;
   const offline = total - online;
+
+  const criticalAlerts = alerts?.filter((a) => a.severity === "CRITICAL" && a.status === "OPEN").length ?? 0;
+
+  let highRiskCount = 0;
+  const riskPie = [
+    { name: "Low", value: 0, color: "var(--muted-foreground)" },
+    { name: "Medium", value: 0, color: "#c08a3e" },
+    { name: "High", value: 0, color: "var(--critical)" },
+    { name: "Critical", value: 0, color: "var(--primary)" },
+  ];
+  let totalRisk = 0;
+  if (riskScores) {
+    for (const r of riskScores) {
+      totalRisk++;
+      if (r.level === "CRITICAL") riskPie[3].value++;
+      else if (r.level === "HIGH") riskPie[2].value++;
+      else if (r.level === "MEDIUM") riskPie[1].value++;
+      else riskPie[0].value++;
+      if (r.level === "HIGH" || r.level === "CRITICAL") highRiskCount++;
+    }
+  }
 
   return (
     <AppShell title="Operations Overview" subtitle="DASHBOARD">
@@ -73,10 +89,9 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* MOCK: no alerts backend yet - see file header comment. */}
         <div className="col-span-4 bg-primary text-primary-foreground rounded-lg p-6 flex flex-col">
           <div className="text-[11px] tracking-widest opacity-80 font-bold">CRITICAL ALERTS</div>
-          <div className="text-5xl font-bold mt-4">04</div>
+          <div className="text-5xl font-bold mt-4">{alertsLoading ? "—" : String(criticalAlerts).padStart(2, "0")}</div>
           <button className="mt-auto pt-6 w-full">
             <div className="bg-black/20 hover:bg-black/30 transition-colors rounded px-4 py-3 flex items-center justify-between text-xs font-bold tracking-wider">
               ACTION REQUIRED
@@ -85,12 +100,9 @@ function Dashboard() {
           </button>
         </div>
 
-        {/* MOCK: ACTIVE USERS / HIGH RISK / IDLE SYSTEMS / LAN DATA all
-            need backend that doesn't exist yet (user-session tracking,
-            risk engine, idle-event aggregation, network-usage totals). */}
         <div className="col-span-4 grid grid-cols-2 gap-3">
           <StatCard label="ACTIVE USERS" value="118" />
-          <StatCard label="HIGH RISK" value="12" accent="danger" />
+          <StatCard label="HIGH RISK" value={riskLoading ? "—" : String(highRiskCount)} accent="danger" />
           <StatCard label="IDLE SYSTEMS" value="23" accent="primary" />
           <StatCard label="LAN DATA / DAY" value="2.4 TB" />
         </div>
@@ -144,7 +156,7 @@ function Dashboard() {
             </ResponsiveContainer>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none -mt-6">
               <div className="text-center">
-                <div className="text-2xl font-bold">346</div>
+                <div className="text-2xl font-bold">{riskLoading ? "—" : totalRisk}</div>
                 <div className="text-[10px] tracking-widest text-muted-foreground">TOTAL</div>
               </div>
             </div>

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, SeverityBadge } from "@/components/AppShell";
 import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
-import { useAlerts, useAcknowledgeAlert } from "@/api/queries";
+import { useAlerts, useAcknowledgeAlert, useResolveAlert } from "@/api/queries";
 
 export const Route = createFileRoute("/alerts")({
   head: () => ({ meta: [{ title: "SecureSOC — Alerts" }] }),
@@ -17,6 +17,7 @@ export const Route = createFileRoute("/alerts")({
 function AlertsPage() {
   const { data: alerts, isLoading, isError } = useAlerts();
   const acknowledge = useAcknowledgeAlert();
+  const resolve = useResolveAlert();
   const rows = alerts ?? [];
 
   const open = rows.filter((a) => a.status === "OPEN").length;
@@ -86,11 +87,21 @@ function AlertsPage() {
                     {a.status === "OPEN" && (
                       <button
                         onClick={() => acknowledge.mutate(a.id)}
-                        disabled={acknowledge.isPending}
+                        disabled={acknowledge.isPending || resolve.isPending}
                         className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wider bg-primary text-primary-foreground px-3 py-1.5 rounded disabled:opacity-60"
                       >
                         {acknowledge.isPending && acknowledge.variables === a.id && <Loader2 className="w-3 h-3 animate-spin" />}
                         ACKNOWLEDGE
+                      </button>
+                    )}
+                    {a.status === "ACKNOWLEDGED" && (
+                      <button
+                        onClick={() => resolve.mutate(a.id)}
+                        disabled={resolve.isPending || acknowledge.isPending}
+                        className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wider bg-muted text-foreground px-3 py-1.5 rounded disabled:opacity-60"
+                      >
+                        {resolve.isPending && resolve.variables === a.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                        RESOLVE
                       </button>
                     )}
                   </td>

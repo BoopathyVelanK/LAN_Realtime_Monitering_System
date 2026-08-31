@@ -112,13 +112,20 @@ export const dashboardApi = {
       ? Promise.resolve(getMockEndpoints())
       : httpClient.get('/endpoints').then((r) => r.data),
 
-  /** MOCK ONLY - no backend /alerts endpoint exists yet. See file header. */
-  getAlerts: (params?: { endpointId?: string; status?: string }): Promise<AlertResponse[]> =>
-    Promise.resolve(
-      getMockAlerts().filter(
-        (a) => (!params?.endpointId || a.endpointId === params.endpointId) && (!params?.status || a.status === params.status),
-      ),
-    ),
+  getAlerts: (params?: { endpointId?: string; status?: string }): Promise<AlertResponse[]> => {
+    if (USE_MOCKS) {
+      return Promise.resolve(
+        getMockAlerts().filter(
+          (a) => (!params?.endpointId || a.endpointId === params.endpointId) && (!params?.status || a.status === params.status),
+        ),
+      );
+    }
+    const search = new URLSearchParams();
+    if (params?.endpointId) search.set('endpointId', params.endpointId);
+    if (params?.status) search.set('status', params.status);
+    const qs = search.toString();
+    return httpClient.get(`/alerts${qs ? `?${qs}` : ''}`).then((r) => r.data);
+  },
 
   /** Real backend as of Checkpoint C (RiskScoreController) - respects
    * USE_MOCKS like getEndpoints. A missing RiskScore row (endpoint never
@@ -140,13 +147,15 @@ export const dashboardApi = {
       ? Promise.resolve(getMockRisk())
       : httpClient.get('/risk-scores').then((r) => r.data),
 
-  /** MOCK ONLY - no backend /alerts/{id}/acknowledge endpoint exists yet. */
   acknowledgeAlert: (id: string, _comment?: string): Promise<AlertResponse> =>
-    mockUpdateAlertStatus(id, 'ACKNOWLEDGED'),
+    USE_MOCKS
+      ? mockUpdateAlertStatus(id, 'ACKNOWLEDGED')
+      : httpClient.post(`/alerts/${id}/acknowledge`).then((r) => r.data),
 
-  /** MOCK ONLY - no backend /alerts/{id}/resolve endpoint exists yet. */
   resolveAlert: (id: string, _comment?: string): Promise<AlertResponse> =>
-    mockUpdateAlertStatus(id, 'RESOLVED'),
+    USE_MOCKS
+      ? mockUpdateAlertStatus(id, 'RESOLVED')
+      : httpClient.post(`/alerts/${id}/resolve`).then((r) => r.data),
 
   // ---------------------------------------------------------------
   // Phase 4B - real backend, respects USE_MOCKS like getEndpoints.
