@@ -67,6 +67,11 @@ import java.util.UUID;
  *       A concurrent read-modify-write race on the same endpoint's score
  *       is accepted as last-write-wins for now.</li>
  * </ul>
+ *
+ * After each successful persistence of a {@link RiskScore}, the resulting
+ * {@link RiskScoreResponse} is handed to {@link WebSocketRiskEventPublisher},
+ * which publishes it to {@code /topic/risk} after the enclosing transaction
+ * commits — never before.
  */
 @Service
 public class RiskScoreService {
@@ -76,13 +81,16 @@ public class RiskScoreService {
 
     private final RiskScoreRepository riskScoreRepository;
     private final EndpointDeviceRepository endpointDeviceRepository;
+    private final WebSocketRiskEventPublisher riskPublisher;
 
     public RiskScoreService(
         RiskScoreRepository riskScoreRepository,
-        EndpointDeviceRepository endpointDeviceRepository
+        EndpointDeviceRepository endpointDeviceRepository,
+        WebSocketRiskEventPublisher riskPublisher
     ) {
         this.riskScoreRepository = riskScoreRepository;
         this.endpointDeviceRepository = endpointDeviceRepository;
+        this.riskPublisher = riskPublisher;
     }
 
     /**
@@ -103,6 +111,9 @@ public class RiskScoreService {
      * reference), matching how {@link AlertService} resolves its own
      * entity references.
      *
+     * After a successful save, the updated {@link RiskScoreResponse} is
+     * published to {@code /topic/risk} after transaction commit.
+     *
      * @throws ResourceNotFoundException if {@code result.endpointId()} is
      *         non-null but does not resolve to an existing
      *         {@code EndpointDevice} when a new {@code RiskScore} row would
@@ -121,7 +132,9 @@ public class RiskScoreService {
         riskScore.setScore((short) updatedScore);
         riskScore.setLevel(levelFor(updatedScore));
 
-        return Optional.of(riskScoreRepository.save(riskScore));
+        RiskScore saved = riskScoreRepository.save(riskScore);
+        riskPublisher.publishRiskScore(toResponse(saved));
+        return Optional.of(saved);
     }
 
     /**

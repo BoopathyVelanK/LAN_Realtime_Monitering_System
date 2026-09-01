@@ -40,6 +40,8 @@ class RiskScoreServiceTest {
     private RiskScoreRepository riskScoreRepository;
     @Mock
     private EndpointDeviceRepository endpointDeviceRepository;
+    @Mock
+    private WebSocketRiskEventPublisher riskPublisher;
 
     private RiskScoreService riskScoreService;
 
@@ -49,7 +51,7 @@ class RiskScoreServiceTest {
 
     @BeforeEach
     void setUp() {
-        riskScoreService = new RiskScoreService(riskScoreRepository, endpointDeviceRepository);
+        riskScoreService = new RiskScoreService(riskScoreRepository, endpointDeviceRepository, riskPublisher);
         ruleId = UUID.randomUUID();
         userId = UUID.randomUUID();
         endpointId = UUID.randomUUID();
@@ -422,4 +424,27 @@ class RiskScoreServiceTest {
 
         verifyNoInteractions(endpointDeviceRepository);
     }
+
+    // =====================================================================
+    // WebSocket risk-score publishing
+    // =====================================================================
+
+    @Test
+    void recordDetection_successfulSave_invokesRiskPublisher() {
+        when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.empty());
+        when(endpointDeviceRepository.findById(endpointId)).thenReturn(Optional.of(endpoint()));
+        when(riskScoreRepository.save(any(RiskScore.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        riskScoreService.recordDetection(detectedResult(DetectionRule.Severity.LOW, endpointId));
+
+        verify(riskPublisher).publishRiskScore(any(RiskScoreResponse.class));
+    }
+
+    @Test
+    void recordDetection_nullEndpointId_doesNotInvokeRiskPublisher() {
+        riskScoreService.recordDetection(detectedResult(DetectionRule.Severity.HIGH, null));
+
+        verifyNoInteractions(riskPublisher);
+    }
+
 }

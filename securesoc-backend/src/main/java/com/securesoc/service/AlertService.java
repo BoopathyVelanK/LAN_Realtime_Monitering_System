@@ -1,6 +1,7 @@
 package com.securesoc.service;
 
 import com.securesoc.detection.DetectionResult;
+import com.securesoc.dto.AlertResponse;
 import com.securesoc.entity.Alert;
 import com.securesoc.entity.DetectionRule;
 import com.securesoc.entity.EndpointDevice;
@@ -11,6 +12,9 @@ import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,18 +22,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import com.securesoc.dto.AlertResponse;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 
 /**
  * Converts a detected {@link DetectionResult} into a persisted {@link Alert}.
- *
- * This service only creates/persists Alert rows. It does not run RiskEngine,
- * publish WebSocket notifications, or implement acknowledgement/assignment/
- * resolution - those are later phases (see DetectionResult's own javadoc,
- * which already anticipated this class).
  *
  * Alert deduplication: when a DetectionResult carries a non-null userId,
  * at most one OPEN alert may exist for that (userId, ruleId) pair - see
@@ -37,6 +32,13 @@ import org.springframework.data.domain.Pageable;
  * V8__add_alert_open_dedup_index.sql. endpointId is intentionally not
  * part of the dedup key. Results with a null userId always create a new
  * Alert, unaffected by deduplication.
+ *
+ * After each successful persistence, the resulting {@link AlertResponse} is
+ * handed to {@link WebSocketAlertEventPublisher}, which publishes it to
+ * {@code /topic/alerts} after the enclosing transaction commits — never
+ * before. For dedup-reused alerts (createOrReuseForUser returning an
+ * existing OPEN alert without a new INSERT) no WebSocket event is published,
+ * since the alert state did not change.
  */
 @Service
 public class AlertService {
@@ -46,19 +48,22 @@ public class AlertService {
     private final UserRepository userRepository;
     private final EndpointDeviceRepository endpointDeviceRepository;
     private final AlertInsertExecutor alertInsertExecutor;
+    private final WebSocketAlertEventPublisher alertPublisher;
 
     public AlertService(
         AlertRepository alertRepository,
         DetectionRuleRepository detectionRuleRepository,
         UserRepository userRepository,
         EndpointDeviceRepository endpointDeviceRepository,
-        AlertInsertExecutor alertInsertExecutor
+        AlertInsertExecutor alertInsertExecutor,
+        WebSocketAlertEventPublisher alertPublisher
     ) {
         this.alertRepository = alertRepository;
         this.detectionRuleRepository = detectionRuleRepository;
         this.userRepository = userRepository;
         this.endpointDeviceRepository = endpointDeviceRepository;
         this.alertInsertExecutor = alertInsertExecutor;
+        this.alertPublisher = alertPublisher;
     }
 
     /**
@@ -73,6 +78,11 @@ public class AlertService {
      * through their repositories rather than constructed as fake/detached
      * references, so a stale or bogus id can never silently become an
      * invalid foreign key on the saved Alert.
+     *
+     * When a new Alert is successfully persisted, its {@link AlertResponse}
+     * is published to {@code /topic/alerts} via {@link WebSocketAlertEventPublisher}
+     * after the transaction commits. Dedup-reused existing OPEN alerts do
+     * not trigger a publish (no state change occurred).
      *
      * @throws ResourceNotFoundException if {@code result.ruleId()} does not
      *         resolve to an existing DetectionRule, or if a present (i.e.
@@ -113,13 +123,24 @@ public class AlertService {
             alert.setEndpoint(endpoint);
         }
 
+        Alert saved;
+        boolean isNewAlert;
         if (user == null) {
             // No user to deduplicate against - create normally, exactly as
             // before deduplication existed.
-            return Optional.of(alertRepository.save(alert));
+            saved = alertRepository.save(alert);
+            isNewAlert = true;
+        } else {
+            AlertOrReuse result2 = createOrReuseForUser(alert, user.getId(), rule.getId());
+            saved = result2.alert();
+            isNewAlert = result2.isNew();
         }
 
-        return Optional.of(createOrReuseForUser(alert, user.getId(), rule.getId()));
+        if (isNewAlert) {
+            alertPublisher.publishAlert(toResponse(saved));
+        }
+
+        return Optional.of(saved);
     }
 
     /**
@@ -143,15 +164,15 @@ public class AlertService {
      * javadoc for why that isolation is required given how
      * {@code DetectionEngine.evaluate()} calls this method.
      */
-    private Alert createOrReuseForUser(Alert alert, UUID userId, UUID ruleId) {
+    private AlertOrReuse createOrReuseForUser(Alert alert, UUID userId, UUID ruleId) {
         Optional<Alert> existing =
             alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN);
         if (existing.isPresent()) {
-            return existing.get();
+            return new AlertOrReuse(existing.get(), false);
         }
 
         try {
-            return alertInsertExecutor.insertAlert(alert);
+            return new AlertOrReuse(alertInsertExecutor.insertAlert(alert), true);
         } catch (DataIntegrityViolationException raceLoss) {
             // A concurrent request won the race and committed an OPEN
             // alert for the same (user_id, rule_id) between our check
@@ -159,10 +180,14 @@ public class AlertService {
             // ran in its own REQUIRES_NEW transaction, so only that
             // nested transaction rolled back - this (outer) transaction
             // and its EntityManager are untouched and safe to keep using.
-            return alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN)
+            Alert reused = alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN)
                 .orElseThrow(() -> raceLoss);
+            return new AlertOrReuse(reused, false);
         }
     }
+
+    /** Simple carrier: the saved alert and whether it was newly inserted (vs. dedup-reused). */
+    private record AlertOrReuse(Alert alert, boolean isNew) {}
 
     /** DetectionResult carries DetectionRule.Severity (see that record's
      * javadoc for why), while Alert has its own identical-valued Severity
@@ -217,7 +242,9 @@ public class AlertService {
             alert.setAcknowledgedAt(Instant.now());
             alert = alertRepository.save(alert);
         }
-        return toResponse(alert);
+        AlertResponse response = toResponse(alert);
+        alertPublisher.publishAlert(response);
+        return response;
     }
 
     @Transactional
@@ -230,7 +257,9 @@ public class AlertService {
             alert.setResolvedAt(Instant.now());
             alert = alertRepository.save(alert);
         }
-        return toResponse(alert);
+        AlertResponse response = toResponse(alert);
+        alertPublisher.publishAlert(response);
+        return response;
     }
 
     static AlertResponse toResponse(Alert alert) {
