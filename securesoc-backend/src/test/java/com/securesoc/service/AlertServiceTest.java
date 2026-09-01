@@ -9,6 +9,7 @@ import com.securesoc.exception.ResourceNotFoundException;
 import com.securesoc.repository.AlertRepository;
 import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.repository.EndpointDeviceRepository;
+import com.securesoc.dto.AlertResponse;
 import com.securesoc.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,8 @@ class AlertServiceTest {
     private EndpointDeviceRepository endpointDeviceRepository;
     @Mock
     private AlertInsertExecutor alertInsertExecutor;
+    @Mock
+    private WebSocketAlertEventPublisher alertPublisher;
 
     private AlertService alertService;
 
@@ -57,7 +60,7 @@ class AlertServiceTest {
     void setUp() {
         alertService = new AlertService(
             alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository,
-            alertInsertExecutor);
+            alertInsertExecutor, alertPublisher);
         ruleId = UUID.randomUUID();
         userId = UUID.randomUUID();
         endpointId = UUID.randomUUID();
@@ -116,7 +119,7 @@ class AlertServiceTest {
 
         assertTrue(result.isEmpty());
         verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
-            endpointDeviceRepository, alertInsertExecutor);
+            endpointDeviceRepository, alertInsertExecutor, alertPublisher);
     }
 
     @Test
@@ -128,7 +131,7 @@ class AlertServiceTest {
 
         assertTrue(result.isEmpty());
         verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
-            endpointDeviceRepository, alertInsertExecutor);
+            endpointDeviceRepository, alertInsertExecutor, alertPublisher);
     }
 
     @Test
@@ -137,7 +140,7 @@ class AlertServiceTest {
 
         assertTrue(result.isEmpty());
         verifyNoInteractions(alertRepository, detectionRuleRepository, userRepository,
-            endpointDeviceRepository, alertInsertExecutor);
+            endpointDeviceRepository, alertInsertExecutor, alertPublisher);
     }
 
     // --- userId present: resolved, mapped, and routed through the dedup path ---
@@ -245,7 +248,7 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(null, null)));
 
         verify(alertRepository, never()).save(any(Alert.class));
-        verifyNoInteractions(alertInsertExecutor);
+        verifyNoInteractions(alertInsertExecutor, alertPublisher);
     }
 
     @Test
@@ -257,7 +260,7 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(userId, null)));
 
         verify(alertRepository, never()).save(any(Alert.class));
-        verifyNoInteractions(alertInsertExecutor);
+        verifyNoInteractions(alertInsertExecutor, alertPublisher);
     }
 
     @Test
@@ -269,7 +272,7 @@ class AlertServiceTest {
             () -> alertService.createAlertFrom(detectedResult(null, endpointId)));
 
         verify(alertRepository, never()).save(any(Alert.class));
-        verifyNoInteractions(alertInsertExecutor);
+        verifyNoInteractions(alertInsertExecutor, alertPublisher);
     }
 
     // =====================================================================
@@ -318,7 +321,7 @@ class AlertServiceTest {
 
         assertTrue(result.isPresent());
         assertSame(existing, result.get());
-        verifyNoInteractions(alertInsertExecutor);
+        verifyNoInteractions(alertInsertExecutor, alertPublisher);
         verify(alertRepository, never()).save(any(Alert.class));
     }
 
@@ -438,4 +441,68 @@ class AlertServiceTest {
         verify(alertInsertExecutor, times(2)).insertAlert(any(Alert.class));
         assertNotEquals(ruleIdA, ruleIdB);
     }
+
+    // =====================================================================
+    // WebSocket alert publishing
+    // =====================================================================
+
+    @Test
+    void createAlertFrom_newAlert_invokesAlertPublisher() {
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        alertService.createAlertFrom(detectedResult(null, null));
+
+        verify(alertPublisher).publishAlert(any(AlertResponse.class));
+    }
+
+    @Test
+    void createAlertFrom_dedupReuseExistingOpenAlert_doesNotInvokePublisher() {
+        User user = new User();
+        user.setId(userId);
+        Alert existing = new Alert();
+        existing.setId(UUID.randomUUID());
+        existing.setUser(user);
+        existing.setStatus(Alert.Status.OPEN);
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.of(existing));
+
+        alertService.createAlertFrom(detectedResult(userId, null));
+
+        verify(alertPublisher, never()).publishAlert(any());
+    }
+
+    @Test
+    void acknowledgeAlert_invokesAlertPublisher() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = new Alert();
+        alert.setId(alertId);
+        alert.setStatus(Alert.Status.OPEN);
+        User user = new User();
+        user.setId(userId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        alertService.acknowledgeAlert(alertId, userId);
+
+        verify(alertPublisher).publishAlert(any(AlertResponse.class));
+    }
+
+    @Test
+    void resolveAlert_invokesAlertPublisher() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = new Alert();
+        alert.setId(alertId);
+        alert.setStatus(Alert.Status.OPEN);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        alertService.resolveAlert(alertId);
+
+        verify(alertPublisher).publishAlert(any(AlertResponse.class));
+    }
+
 }
