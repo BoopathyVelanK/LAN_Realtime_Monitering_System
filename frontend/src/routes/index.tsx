@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell, StatCard, SectionCard, SeverityBadge, Meter } from "@/components/AppShell";
 import { TrendingUp, AlertTriangle, Download, Clock, ShieldAlert, Wifi } from "lucide-react";
 import {
-  AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
-  BarChart, Bar, PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, Legend, ResponsiveContainer
 } from "recharts";
 import { useEndpoints, useAlerts, useRiskScores } from "@/api/queries";
 
@@ -11,39 +10,6 @@ export const Route = createFileRoute("/")({
   head: () => ({ meta: [{ title: "SecureSOC — Dashboard" }] }),
   component: Dashboard,
 });
-
-// -----------------------------------------------------------------------
-// MOCK DATA (Phase 4A audit): everything below is illustrative and stays
-// that way until the corresponding backend exists:
-//   - networkSeries / cpuSeries: no historical resource-usage metrics
-//     endpoint (agent heartbeats aren't persisted as a time series).
-//   - riskPie: no risk-scoring engine (Phase 4 detection engine).
-//   - recentEvents: MonitoringController is ingest-only (POST), there is
-//     no GET endpoint to read login/USB/VPN/idle events back - and no
-//     alerts backend either. See dashboardApi.ts's header comment.
-// Only the "TOTAL ENDPOINTS" hero card below is wired to real data via
-// GET /endpoints (see useEndpoints() in the Dashboard component).
-// -----------------------------------------------------------------------
-
-const networkSeries = Array.from({ length: 24 }, (_, i) => ({
-  t: `${String(i).padStart(2, "0")}:00`,
-  up: Math.round(80 + Math.sin(i / 2) * 40 + Math.random() * 30),
-  down: Math.round(160 + Math.cos(i / 3) * 60 + Math.random() * 40),
-}));
-
-const cpuSeries = Array.from({ length: 12 }, (_, i) => ({
-  t: `${i * 5}m`,
-  cpu: Math.round(30 + Math.random() * 50),
-  ram: Math.round(40 + Math.random() * 35),
-}));
-
-const recentEvents = [
-  { ts: "14:02:11", host: "LAB-PC-17", user: "student_42", type: "Unauthorized USB Inserted", sev: "CRITICAL" as const },
-  { ts: "13:58:44", host: "LAB-PC-22", user: "student_11", type: "Idle > 30m (Critical Idle)", sev: "HIGH" as const },
-  { ts: "13:45:01", host: "FAC-DC-MAIN", user: "admin_root", type: "Lateral Movement Indicator", sev: "CRITICAL" as const },
-  { ts: "13:20:12", host: "LAB-PC-04", user: "student_07", type: "VPN Process Detected (WireGuard)", sev: "MEDIUM" as const },
-  { ts: "13:11:02", host: "LAB-PC-09", user: "student_88", type: "Excessive Data Upload (412 MB)", sev: "HIGH" as const },
-];
 
 function Dashboard() {
   const { data: endpoints, isLoading: endpointsLoading } = useEndpoints();
@@ -101,13 +67,13 @@ function Dashboard() {
         </div>
 
         <div className="col-span-4 grid grid-cols-2 gap-3">
-          <StatCard label="ACTIVE USERS" value="118" />
+          <StatCard label="ACTIVE USERS" value="—" />
           <StatCard label="HIGH RISK" value={riskLoading ? "—" : String(highRiskCount)} accent="danger" />
-          <StatCard label="IDLE SYSTEMS" value="23" accent="primary" />
-          <StatCard label="LAN DATA / DAY" value="2.4 TB" />
+          <StatCard label="IDLE SYSTEMS" value="—" accent="primary" />
+          <StatCard label="LAN DATA / DAY" value="—" />
         </div>
 
-        {/* Network usage chart - MOCK, see file header comment. */}
+        {/* Network usage chart - see file header comment. */}
         <SectionCard
           title="Network Usage (24h, MB/s)"
           className="col-span-8"
@@ -120,30 +86,11 @@ function Dashboard() {
           }
         >
           <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={networkSeries}>
-                <defs>
-                  <linearGradient id="up" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="down" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--critical)" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="var(--critical)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" />
-                <XAxis dataKey="t" stroke="var(--muted-foreground)" fontSize={10} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={10} />
-                <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", fontSize: 12, fontFamily: "inherit" }} />
-                <Area type="monotone" dataKey="down" stroke="var(--critical)" fill="url(#down)" strokeWidth={2} />
-                <Area type="monotone" dataKey="up" stroke="var(--primary)" fill="url(#up)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Historical network telemetry unavailable</div>
           </div>
         </SectionCard>
 
-        {/* Risk distribution - MOCK, see file header comment. */}
+        {/* Risk distribution */}
         <SectionCard title="Risk Distribution" className="col-span-4">
           <div className="h-60 relative">
             <ResponsiveContainer width="100%" height="100%">
@@ -163,7 +110,7 @@ function Dashboard() {
           </div>
         </SectionCard>
 
-        {/* Recent Events - MOCK, see file header comment. */}
+        {/* Recent Events */}
         <SectionCard
           title="Recent Events"
           className="col-span-8"
@@ -179,33 +126,35 @@ function Dashboard() {
               <tr className="text-left text-[10px] tracking-widest text-muted-foreground border-b border-border">
                 <th className="px-2 pb-2 font-bold">TIME</th>
                 <th className="px-2 pb-2 font-bold">HOST</th>
-                <th className="px-2 pb-2 font-bold">USER</th>
                 <th className="px-2 pb-2 font-bold">EVENT</th>
                 <th className="px-2 pb-2 font-bold">SEVERITY</th>
               </tr>
             </thead>
             <tbody>
-              {recentEvents.map((e, i) => (
-                <tr key={i} className="border-b border-border last:border-0">
-                  <td className="px-2 py-3 text-xs">{e.ts}</td>
-                  <td className="px-2 py-3 text-xs font-bold">{e.host}</td>
-                  <td className="px-2 py-3 text-xs text-muted-foreground">{e.user}</td>
-                  <td className="px-2 py-3 text-xs">{e.type}</td>
-                  <td className="px-2 py-3"><SeverityBadge s={e.sev} /></td>
+              {alertsLoading && (
+                <tr><td colSpan={4} className="px-2 py-8 text-center text-xs text-muted-foreground">Loading recent events…</td></tr>
+              )}
+              {!alertsLoading && alerts?.length === 0 && (
+                <tr><td colSpan={4} className="px-2 py-8 text-center text-xs text-muted-foreground">No recent events.</td></tr>
+              )}
+              {!alertsLoading && alerts?.slice(0, 5).map((e) => (
+                <tr key={e.id} className="border-b border-border last:border-0">
+                  <td className="px-2 py-3 text-xs">{new Date(e.createdAt).toLocaleTimeString()}</td>
+                  <td className="px-2 py-3 text-xs font-bold">{e.hostname}</td>
+                  <td className="px-2 py-3 text-xs">{e.title}</td>
+                  <td className="px-2 py-3"><SeverityBadge s={e.severity as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </SectionCard>
 
-        {/* System health - MOCK (LAN HEARTBEAT OK reuses the real total
-            below it would be nice to wire, but CPU/MEM/STORAGE readings
-            need a metrics endpoint that doesn't exist yet). */}
+        {/* System health */}
         <SectionCard title="System Health" className="col-span-4">
           <div className="space-y-4">
-            <Health label="CPU CORE LOAD" right="42%" value={42} />
-            <Health label="MEMORY UTILIZATION" right="12.4 GB" value={55} />
-            <Health label="STORAGE" right="92% CRITICAL" value={92} accent />
+            <Health label="CPU CORE LOAD" right="—" value={0} />
+            <Health label="MEMORY UTILIZATION" right="—" value={0} />
+            <Health label="STORAGE" right="—" value={0} />
             <Health
               label="LAN HEARTBEAT OK"
               right={endpointsLoading ? "—" : `${online}/${total}`}
@@ -214,19 +163,10 @@ function Dashboard() {
           </div>
         </SectionCard>
 
-        {/* CPU / RAM trend - MOCK, see file header comment. */}
+        {/* CPU & Memory Trend */}
         <SectionCard title="CPU & Memory Trend (1h)" className="col-span-8">
           <div className="h-52">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={cpuSeries}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" />
-                <XAxis dataKey="t" stroke="var(--muted-foreground)" fontSize={10} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={10} />
-                <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", fontSize: 12 }} />
-                <Bar dataKey="cpu" fill="var(--primary)" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="ram" fill="var(--critical)" opacity={0.6} radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Historical CPU & memory telemetry unavailable</div>
           </div>
         </SectionCard>
 
