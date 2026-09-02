@@ -13,17 +13,9 @@
  *     MonitoringController's GET endpoints, DepartmentController,
  *     LaboratoryController, and WebSocketEndpointEventPublisher for
  *     EndpointStatusEvent specifically), and (as of Checkpoint C)
- *     RiskScoreResponse: a real RiskScoreController/RiskScoreService
+ *   - RiskScoreResponse: a real RiskScoreController/RiskScoreService
  *     exist on the backend (GET /risk-scores, GET /risk-scores/{id}).
- *   - AlertResponse: still CONTRACT-FIRST only - there is no
- *     AlertController or Alert-side REST exposure on the backend yet
- *     (RiskScore and Alert are separate persistence paths off the same
- *     DetectionEngine; only RiskScore has been exposed via REST so far).
- *     This shape exists so the frontend and future backend agree on the
- *     contract in advance; nothing currently returns this data from a
- *     real endpoint. See frontend/src/api/dashboardApi.ts, which
- *     deliberately always serves it from mocks/data.ts regardless of
- *     VITE_USE_MOCKS until that backend work lands.
+ *   - AlertResponse: wired to AlertController.
  */
 
 export interface AuthResponse {
@@ -78,8 +70,6 @@ export interface EndpointStatusEvent {
 export type AlertSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string;
 export type AlertStatus = 'OPEN' | 'ACKNOWLEDGED' | 'RESOLVED' | string;
 
-/** CONTRACT-FIRST: no backend AlertController/Alert entity exists yet -
- * see header comment above. */
 export interface AlertResponse {
   id: string;
   endpointId: string;
@@ -91,6 +81,9 @@ export interface AlertResponse {
   status: AlertStatus;
   assignedToUserId: string | null;
   assignedToUsername: string | null;
+  acknowledgedByUserId: string | null;
+  acknowledgedByUsername: string | null;
+  acknowledgedAt: string | null;
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;

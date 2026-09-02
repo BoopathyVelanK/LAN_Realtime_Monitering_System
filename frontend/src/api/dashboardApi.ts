@@ -88,13 +88,8 @@ function getMockLaboratories() {
 //   - GET /risk-scores, /risk-scores/{id} EXISTS (RiskScoreController,
 //     Checkpoint C) - getRiskScore/getAllRiskScores below respect
 //     USE_MOCKS like getEndpoints now that this backend is real.
-//   - /alerts                       DOES NOT EXIST YET (Phase 4 detection
-//     engine, Alert side). AlertResponse in types/api.ts is still a
-//     contract-first type with nothing behind it.
-// Every method below except getAlerts/acknowledgeAlert/resolveAlert
-// respects USE_MOCKS, since their backend is real. Those three do NOT -
-// they always return mock data regardless of USE_MOCKS, since calling
-// httpClient for them would 404 against a real backend.
+//   - /alerts                       EXISTS (AlertController, Phase 4)
+// Every method below respects USE_MOCKS, since their backend is real.
 // -----------------------------------------------------------------------
 
 function buildQuery(params?: MonitoringListParams): string {

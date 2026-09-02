@@ -8,12 +8,6 @@ export const Route = createFileRoute("/alerts")({
   component: AlertsPage,
 });
 
-// MOCK DATA (Phase 4A audit): no AlertController/Alert entity exists on
-// the backend yet (Phase 4 detection engine). useAlerts() below always
-// resolves from mocks/data.ts regardless of VITE_USE_MOCKS - see
-// dashboardApi.ts's header comment. This page used to keep its own
-// separate hardcoded array; it now goes through the same query layer as
-// every other page so there's a single mock data source, not two.
 function AlertsPage() {
   const { data: alerts, isLoading, isError } = useAlerts();
   const acknowledge = useAcknowledgeAlert();
@@ -27,7 +21,7 @@ function AlertsPage() {
   return (
     <AppShell title="Alert Center" subtitle="ACTIVE NOTIFICATIONS">
       <div className="px-8 pb-8">
-        <div className="grid grid-cols-4 gap-4 mb-5">
+        <div className="grid grid-cols-3 gap-4 mb-5">
           <div className="bg-card border border-border rounded-lg p-5">
             <div className="text-[10px] tracking-widest text-muted-foreground font-bold">OPEN</div>
             <div className="text-3xl font-bold mt-3 text-critical">{isLoading ? "—" : open}</div>
@@ -39,12 +33,6 @@ function AlertsPage() {
           <div className="bg-card border border-border rounded-lg p-5">
             <div className="text-[10px] tracking-widest text-muted-foreground font-bold">RESOLVED</div>
             <div className="text-3xl font-bold mt-3">{isLoading ? "—" : resolved}</div>
-          </div>
-          {/* No timestamped acknowledge/resolve audit trail to compute a
-              real average from yet - mock stat, marked here explicitly. */}
-          <div className="bg-card border border-border rounded-lg p-5">
-            <div className="text-[10px] tracking-widest text-muted-foreground font-bold">AVG RESPONSE (MOCK)</div>
-            <div className="text-3xl font-bold mt-3">4m 12s</div>
           </div>
         </div>
 
