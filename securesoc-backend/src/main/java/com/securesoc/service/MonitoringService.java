@@ -170,6 +170,11 @@ public class MonitoringService {
         event.setBytesSent(request.bytesSent() != null ? request.bytesSent() : 0L);
         event.setBytesReceived(request.bytesReceived() != null ? request.bytesReceived() : 0L);
         event.setInterfaceName(request.interfaceName());
+        // Persisted as-is, including null (an agent build that predates
+        // sampledAt, or a payload already queued offline before this
+        // upgrade) - recordedAt (below, via the entity's own default)
+        // still always reflects real backend ingestion time regardless.
+        event.setSampledAt(request.sampledAt());
         networkUsageEventRepository.save(event);
         return MonitoringIngestResponse.ok("Network usage recorded.");
     }
@@ -181,6 +186,9 @@ public class MonitoringService {
         event.setUploadMb(request.uploadMb() != null ? request.uploadMb() : java.math.BigDecimal.ZERO);
         event.setDownloadMb(request.downloadMb() != null ? request.downloadMb() : java.math.BigDecimal.ZERO);
         event.setPeriodSeconds(request.periodSeconds() != null ? request.periodSeconds() : 0);
+        // See recordNetworkUsage's comment above - same null-passthrough,
+        // same reasoning.
+        event.setSampledAt(request.sampledAt());
         internetUsageEventRepository.save(event);
         return MonitoringIngestResponse.ok("Internet usage recorded.");
     }
@@ -254,7 +262,7 @@ public class MonitoringService {
             : networkUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(endpointId, pageable);
         return PageResponse.of(page.map(e -> new NetworkUsageEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
-            e.getBytesSent(), e.getBytesReceived(), e.getInterfaceName(), e.getRecordedAt()
+            e.getBytesSent(), e.getBytesReceived(), e.getInterfaceName(), e.getSampledAt(), e.getRecordedAt()
         )));
     }
 
@@ -265,7 +273,7 @@ public class MonitoringService {
             : internetUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(endpointId, pageable);
         return PageResponse.of(page.map(e -> new InternetUsageEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
-            e.getUploadMb(), e.getDownloadMb(), e.getPeriodSeconds(), e.getRecordedAt()
+            e.getUploadMb(), e.getDownloadMb(), e.getPeriodSeconds(), e.getSampledAt(), e.getRecordedAt()
         )));
     }
 

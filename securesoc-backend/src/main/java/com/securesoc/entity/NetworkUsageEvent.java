@@ -35,6 +35,15 @@ public class NetworkUsageEvent {
     @Column(name = "interface_name", length = 100)
     private String interfaceName;
 
+    /** Agent's own collection timestamp (collector.NetworkUsageTracker.
+     * sample()'s sampledAt), as opposed to recordedAt below which is when
+     * *this backend* ingested the row. Nullable: historical rows predate
+     * this column, and a not-yet-upgraded agent (or a payload already
+     * sitting in its offline queue) won't send it either - see
+     * MonitoringService.recordNetworkUsage. */
+    @Column(name = "sampled_at")
+    private Instant sampledAt;
+
     @Column(name = "recorded_at", nullable = false, updatable = false)
     private Instant recordedAt = Instant.now();
 }

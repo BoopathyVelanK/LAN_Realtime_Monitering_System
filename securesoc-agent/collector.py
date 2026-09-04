@@ -11,6 +11,7 @@ import platform
 import socket
 import time
 import uuid
+from datetime import datetime, timezone
 
 import psutil
 
@@ -189,16 +190,27 @@ class NetworkUsageTracker:
 
         self._last_sent, self._last_recv, self._last_time = counters.bytes_sent, counters.bytes_recv, now
 
+        # One collection timestamp for this sample, reused for both halves
+        # of the payload below (and derived from the same `now` already
+        # used for period_seconds, rather than a second, slightly-later
+        # clock read) — this is the agent's actual collection time, kept
+        # distinct from whatever the backend later records as its own
+        # ingestion time (see NetworkUsageEvent/InternetUsageEvent's
+        # recordedAt on the Java side).
+        sampled_at = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
+
         return {
             "network": {
                 "bytesSent": delta_sent,
                 "bytesReceived": delta_recv,
                 "interfaceName": None,  # aggregate across all interfaces
+                "sampledAt": sampled_at,
             },
             "internet": {
                 "uploadMb": round(delta_sent / (1024 * 1024), 3),
                 "downloadMb": round(delta_recv / (1024 * 1024), 3),
                 "periodSeconds": period_seconds,
+                "sampledAt": sampled_at,
             },
         }
 
