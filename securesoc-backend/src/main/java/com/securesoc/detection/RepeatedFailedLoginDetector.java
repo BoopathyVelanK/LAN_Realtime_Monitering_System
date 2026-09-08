@@ -38,6 +38,10 @@ public class RepeatedFailedLoginDetector implements Detector {
 
     @Override
     public DetectionResult evaluate(DetectionContext context, DetectionRule rule) {
+        if (context == null) {
+            return DetectionResult.none();
+        }
+
         if (!supports(rule)) {
             return DetectionResult.none();
         }

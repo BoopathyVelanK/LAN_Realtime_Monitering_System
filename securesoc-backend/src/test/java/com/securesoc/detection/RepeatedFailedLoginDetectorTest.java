@@ -14,6 +14,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -107,6 +108,16 @@ class RepeatedFailedLoginDetectorTest {
         DetectionResult result = detector.evaluate(contextWith(userId, occurredAt), rule);
 
         assertTrue(result.detected());
+    }
+
+    @Test
+    void evaluate_nullContext_returnsNotDetected() {
+        DetectionRule rule = supportedRule(5, 300);
+
+        DetectionResult result = detector.evaluate(null, rule);
+
+        assertFalse(result.detected());
+        verifyNoInteractions(authFailureEventRepository);
     }
 
     @Test
