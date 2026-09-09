@@ -1,12 +1,13 @@
 package com.securesoc.service;
 
 import com.securesoc.detection.DetectionContext;
-import com.securesoc.detection.DetectionEngine;
 import com.securesoc.dto.PageResponse;
 import com.securesoc.dto.monitoring.*;
 import com.securesoc.entity.*;
 import com.securesoc.entity.UsbEvent.Action;
 import com.securesoc.repository.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,8 @@ import java.util.UUID;
 @Service
 public class MonitoringService {
 
+    private static final Logger log = LoggerFactory.getLogger(MonitoringService.class);
+
     private final LoginEventRepository loginEventRepository;
     private final LogoutEventRepository logoutEventRepository;
     private final RunningAppSnapshotRepository runningAppSnapshotRepository;
@@ -42,7 +45,7 @@ public class MonitoringService {
     private final IdleEventRepository idleEventRepository;
     private final NetworkUsageEventRepository networkUsageEventRepository;
     private final InternetUsageEventRepository internetUsageEventRepository;
-    private final DetectionEngine detectionEngine;
+    private final DetectionEvaluationExecutor detectionEvaluationExecutor;
 
     public MonitoringService(
         LoginEventRepository loginEventRepository,
@@ -53,7 +56,7 @@ public class MonitoringService {
         IdleEventRepository idleEventRepository,
         NetworkUsageEventRepository networkUsageEventRepository,
         InternetUsageEventRepository internetUsageEventRepository,
-        DetectionEngine detectionEngine
+        DetectionEvaluationExecutor detectionEvaluationExecutor
     ) {
         this.loginEventRepository = loginEventRepository;
         this.logoutEventRepository = logoutEventRepository;
@@ -63,7 +66,7 @@ public class MonitoringService {
         this.idleEventRepository = idleEventRepository;
         this.networkUsageEventRepository = networkUsageEventRepository;
         this.internetUsageEventRepository = internetUsageEventRepository;
-        this.detectionEngine = detectionEngine;
+        this.detectionEvaluationExecutor = detectionEvaluationExecutor;
     }
 
     // -----------------------------------------------------------------
@@ -139,7 +142,21 @@ public class MonitoringService {
             event.getEventTime(),
             event
         );
-        detectionEngine.evaluate(context);
+
+        // Detection/alert/risk processing runs in its own isolated
+        // (REQUIRES_NEW) transaction - see DetectionEvaluationExecutor's
+        // javadoc for why a plain call into DetectionEngine here would
+        // not be safe. Any failure there must never cost us the USB
+        // telemetry event already flushed above; this mirrors how
+        // AuthService.login() isolates its own DetectionEngine.evaluate()
+        // call from its own critical response.
+        try {
+            detectionEvaluationExecutor.evaluate(context);
+        } catch (RuntimeException detectionFailure) {
+            log.error("Detection engine failed while evaluating a USB_EVENT for endpoint {}. "
+                + "The USB telemetry event was already persisted and is unaffected.",
+                device.getId(), detectionFailure);
+        }
 
         return MonitoringIngestResponse.ok("USB event recorded.");
     }

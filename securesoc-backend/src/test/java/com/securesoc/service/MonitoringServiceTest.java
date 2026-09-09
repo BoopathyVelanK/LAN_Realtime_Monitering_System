@@ -1,7 +1,6 @@
 package com.securesoc.service;
 
 import com.securesoc.detection.DetectionContext;
-import com.securesoc.detection.DetectionEngine;
 import com.securesoc.dto.monitoring.InternetUsageEventRequest;
 import com.securesoc.dto.monitoring.MonitoringIngestResponse;
 import com.securesoc.dto.monitoring.NetworkUsageEventRequest;
@@ -37,7 +36,7 @@ class MonitoringServiceTest {
     @Mock private IdleEventRepository idleEventRepository;
     @Mock private NetworkUsageEventRepository networkUsageEventRepository;
     @Mock private InternetUsageEventRepository internetUsageEventRepository;
-    @Mock private DetectionEngine detectionEngine;
+    @Mock private DetectionEvaluationExecutor detectionEvaluationExecutor;
 
     private MonitoringService monitoringService;
 
@@ -52,12 +51,12 @@ class MonitoringServiceTest {
             idleEventRepository,
             networkUsageEventRepository,
             internetUsageEventRepository,
-            detectionEngine
+            detectionEvaluationExecutor
         );
     }
 
     @Test
-    void recordUsb_persistsEventAndCallsDetectionEngine_withCorrectContext() {
+    void recordUsb_persistsEventAndCallsDetectionEvaluationExecutor_withCorrectContext() {
         EndpointDevice device = new EndpointDevice();
         device.setId(UUID.randomUUID());
         device.setHostname("test-host");
@@ -81,7 +80,7 @@ class MonitoringServiceTest {
         assertNotNull(persistedEvent.getEventTime());
 
         ArgumentCaptor<DetectionContext> contextCaptor = ArgumentCaptor.forClass(DetectionContext.class);
-        verify(detectionEngine).evaluate(contextCaptor.capture());
+        verify(detectionEvaluationExecutor).evaluate(contextCaptor.capture());
         
         DetectionContext context = contextCaptor.getValue();
         assertEquals("USB_EVENT", context.eventSource());
@@ -89,6 +88,53 @@ class MonitoringServiceTest {
         assertNull(context.userId());
         assertEquals(persistedEvent.getEventTime(), context.occurredAt());
         assertEquals(persistedEvent, context.event());
+    }
+
+    // -----------------------------------------------------------------
+    // USB detection-failure isolation - a RuntimeException from detection
+    // must never prevent the already-persisted UsbEvent from being
+    // returned as a successful ingest. See DetectionEvaluationExecutor
+    // for why a REQUIRES_NEW boundary (not just a try/catch around a
+    // plain DetectionEngine call) is required for this guarantee.
+    // -----------------------------------------------------------------
+
+    @Test
+    void recordUsb_detectionSucceeds_returnsNormalSuccessResponse() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        UsbEventRequest request = new UsbEventRequest("test-device", "test-id", "vid", "pid", "CONNECTED");
+
+        MonitoringIngestResponse response = monitoringService.recordUsb(device, request);
+
+        assertEquals("USB event recorded.", response.message());
+        verify(usbEventRepository).saveAndFlush(any(UsbEvent.class));
+        verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
+    }
+
+    @Test
+    void recordUsb_detectionEvaluationExecutorThrows_stillReturnsSuccessResponse_andUsbEventWasAlreadyFlushed() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        UsbEventRequest request = new UsbEventRequest("test-device", "test-id", "vid", "pid", "CONNECTED");
+
+        when(detectionEvaluationExecutor.evaluate(any(DetectionContext.class)))
+            .thenThrow(new RuntimeException("simulated detection failure"));
+
+        MonitoringIngestResponse response = assertDoesNotThrow(() -> monitoringService.recordUsb(device, request));
+
+        assertEquals("USB event recorded.", response.message());
+
+        // The UsbEvent was saveAndFlush()'d BEFORE the detection call, so
+        // this verification proves the telemetry write already happened
+        // and was already sent to the database, independent of whatever
+        // detection did afterwards - a unit test can prove the ordering
+        // and that no exception propagates past this method, but not that
+        // the surrounding physical transaction actually commits; that is
+        // proven separately by a real-Postgres integration test.
+        verify(usbEventRepository).saveAndFlush(any(UsbEvent.class));
+        verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
     }
 
     // -----------------------------------------------------------------
