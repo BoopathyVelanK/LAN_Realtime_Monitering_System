@@ -45,6 +45,7 @@ public class MonitoringService {
     private final IdleEventRepository idleEventRepository;
     private final NetworkUsageEventRepository networkUsageEventRepository;
     private final InternetUsageEventRepository internetUsageEventRepository;
+    private final UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     private final DetectionEvaluationExecutor detectionEvaluationExecutor;
 
     public MonitoringService(
@@ -56,6 +57,7 @@ public class MonitoringService {
         IdleEventRepository idleEventRepository,
         NetworkUsageEventRepository networkUsageEventRepository,
         InternetUsageEventRepository internetUsageEventRepository,
+        UsbEventPersistenceExecutor usbEventPersistenceExecutor,
         DetectionEvaluationExecutor detectionEvaluationExecutor
     ) {
         this.loginEventRepository = loginEventRepository;
@@ -66,6 +68,7 @@ public class MonitoringService {
         this.idleEventRepository = idleEventRepository;
         this.networkUsageEventRepository = networkUsageEventRepository;
         this.internetUsageEventRepository = internetUsageEventRepository;
+        this.usbEventPersistenceExecutor = usbEventPersistenceExecutor;
         this.detectionEvaluationExecutor = detectionEvaluationExecutor;
     }
 
@@ -114,7 +117,14 @@ public class MonitoringService {
         return MonitoringIngestResponse.ok("Recorded " + entries.size() + " running application(s).");
     }
 
-    @Transactional
+    // Deliberately NOT @Transactional at this level - see
+    // UsbEventPersistenceExecutor's javadoc. Persistence and detection
+    // must run as two independent, sequential, separately-committed
+    // transactions, not as one shared transaction wrapping both: a
+    // detector relying on a database-backed count (UsbEventDetector's
+    // threshold query) must be able to see the very row that triggered
+    // it, which requires that row to already be committed - not just
+    // flushed - before detection's own transaction begins.
     public MonitoringIngestResponse recordUsb(EndpointDevice device, UsbEventRequest request) {
         UsbEvent event = new UsbEvent();
         event.setEndpoint(device);
@@ -133,21 +143,25 @@ public class MonitoringService {
             }
         }
 
-        usbEventRepository.saveAndFlush(event);
+        // Persisted and COMMITTED independently, in its own transaction,
+        // strictly before detection runs - see UsbEventPersistenceExecutor's
+        // javadoc for why detection otherwise cannot see the very event it
+        // is meant to evaluate under PostgreSQL READ COMMITTED isolation.
+        UsbEvent persisted = usbEventPersistenceExecutor.persist(event);
 
         DetectionContext context = new DetectionContext(
             "USB_EVENT",
             device.getId(),
             null,
-            event.getEventTime(),
-            event
+            persisted.getEventTime(),
+            persisted
         );
 
         // Detection/alert/risk processing runs in its own isolated
         // (REQUIRES_NEW) transaction - see DetectionEvaluationExecutor's
         // javadoc for why a plain call into DetectionEngine here would
         // not be safe. Any failure there must never cost us the USB
-        // telemetry event already flushed above; this mirrors how
+        // telemetry event already committed above; this mirrors how
         // AuthService.login() isolates its own DetectionEngine.evaluate()
         // call from its own critical response.
         try {

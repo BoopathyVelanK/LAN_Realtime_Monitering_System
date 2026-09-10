@@ -36,6 +36,7 @@ class MonitoringServiceTest {
     @Mock private IdleEventRepository idleEventRepository;
     @Mock private NetworkUsageEventRepository networkUsageEventRepository;
     @Mock private InternetUsageEventRepository internetUsageEventRepository;
+    @Mock private UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     @Mock private DetectionEvaluationExecutor detectionEvaluationExecutor;
 
     private MonitoringService monitoringService;
@@ -51,6 +52,7 @@ class MonitoringServiceTest {
             idleEventRepository,
             networkUsageEventRepository,
             internetUsageEventRepository,
+            usbEventPersistenceExecutor,
             detectionEvaluationExecutor
         );
     }
@@ -63,12 +65,15 @@ class MonitoringServiceTest {
 
         UsbEventRequest request = new UsbEventRequest("test-device", "test-id", "vid", "pid", "CONNECTED");
 
+        when(usbEventPersistenceExecutor.persist(any(UsbEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
         MonitoringIngestResponse response = monitoringService.recordUsb(device, request);
         
         assertEquals("USB event recorded.", response.message());
 
         ArgumentCaptor<UsbEvent> eventCaptor = ArgumentCaptor.forClass(UsbEvent.class);
-        verify(usbEventRepository).saveAndFlush(eventCaptor.capture());
+        verify(usbEventPersistenceExecutor).persist(eventCaptor.capture());
         
         UsbEvent persistedEvent = eventCaptor.getValue();
         assertEquals(device, persistedEvent.getEndpoint());
@@ -105,20 +110,25 @@ class MonitoringServiceTest {
 
         UsbEventRequest request = new UsbEventRequest("test-device", "test-id", "vid", "pid", "CONNECTED");
 
+        when(usbEventPersistenceExecutor.persist(any(UsbEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
         MonitoringIngestResponse response = monitoringService.recordUsb(device, request);
 
         assertEquals("USB event recorded.", response.message());
-        verify(usbEventRepository).saveAndFlush(any(UsbEvent.class));
+        verify(usbEventPersistenceExecutor).persist(any(UsbEvent.class));
         verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
     }
 
     @Test
-    void recordUsb_detectionEvaluationExecutorThrows_stillReturnsSuccessResponse_andUsbEventWasAlreadyFlushed() {
+    void recordUsb_detectionEvaluationExecutorThrows_stillReturnsSuccessResponse_andUsbEventWasAlreadyPersisted() {
         EndpointDevice device = new EndpointDevice();
         device.setId(UUID.randomUUID());
 
         UsbEventRequest request = new UsbEventRequest("test-device", "test-id", "vid", "pid", "CONNECTED");
 
+        when(usbEventPersistenceExecutor.persist(any(UsbEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
         when(detectionEvaluationExecutor.evaluate(any(DetectionContext.class)))
             .thenThrow(new RuntimeException("simulated detection failure"));
 
@@ -126,14 +136,15 @@ class MonitoringServiceTest {
 
         assertEquals("USB event recorded.", response.message());
 
-        // The UsbEvent was saveAndFlush()'d BEFORE the detection call, so
-        // this verification proves the telemetry write already happened
-        // and was already sent to the database, independent of whatever
-        // detection did afterwards - a unit test can prove the ordering
-        // and that no exception propagates past this method, but not that
-        // the surrounding physical transaction actually commits; that is
-        // proven separately by a real-Postgres integration test.
-        verify(usbEventRepository).saveAndFlush(any(UsbEvent.class));
+        // The UsbEvent was persisted (and, for real, committed - see
+        // UsbEventPersistenceExecutor) strictly BEFORE the detection call,
+        // so this verification proves the ordering and that no exception
+        // propagates past this method. A unit test can prove that
+        // ordering but not that the persistence transaction actually
+        // commits in isolation from detection; that is proven separately
+        // by UsbDetectionFailureIsolationIntegrationTest against real
+        // PostgreSQL.
+        verify(usbEventPersistenceExecutor).persist(any(UsbEvent.class));
         verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
     }
 
