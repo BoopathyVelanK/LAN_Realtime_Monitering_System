@@ -34,6 +34,15 @@ public class EndpointDevice {
     @JoinColumn(name = "lab_id")
     private Laboratory lab;
 
+    /** SRS: "one endpoint can have one assigned student". Nullable - most
+     * endpoints have no student assigned until an admin does so. Used by
+     * FacultyScopeService to derive accessible student IDs transitively
+     * through Faculty's assigned laboratories - never assigned directly
+     * to a Faculty member (see FacultyAssignment's Javadoc). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assigned_student_id")
+    private Student assignedStudent;
+
     @Column(name = "os_name", length = 100)
     private String osName;
 
