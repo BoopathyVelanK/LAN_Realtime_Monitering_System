@@ -82,6 +82,18 @@ class FacultyScopeServiceImplTest {
         when(facultyAssignmentRepository.findLaboratoryIdsByFacultyUser_Id(facultyAId)).thenReturn(Set.of(labX));
     }
 
+    // Lighter-weight variant for tests that exercise canAccessLaboratory()
+    // only. That method checks the caller's role and then delegates
+    // directly to facultyAssignmentRepository.existsByFacultyUser_IdAndLaboratory_Id(...)
+    // - it never resolves the full assigned-laboratory ID set via
+    // findLaboratoryIdsByFacultyUser_Id(...). Stubbing that unused method
+    // for a canAccessLaboratory-only test trips Mockito's strict-stubbing
+    // UnnecessaryStubbingException, so those tests stub only what their
+    // code path actually consumes.
+    private void stubFacultyAHasFacultyRole() {
+        when(userRepository.findById(facultyAId)).thenReturn(Optional.of(userWithRole("FACULTY")));
+    }
+
     @Nested
     class Admin {
 
@@ -128,7 +140,7 @@ class FacultyScopeServiceImplTest {
 
         @Test
         void assignedLaboratoryIsAllowed() {
-            stubFacultyAAssignedToLabXOnly();
+            stubFacultyAHasFacultyRole();
             when(facultyAssignmentRepository.existsByFacultyUser_IdAndLaboratory_Id(facultyAId, labX)).thenReturn(true);
 
             assertThat(scopeService.canAccessLaboratory(facultyAId, labX)).isTrue();
@@ -169,7 +181,7 @@ class FacultyScopeServiceImplTest {
 
         @Test
         void unassignedLaboratoryIsDenied() {
-            stubFacultyAAssignedToLabXOnly();
+            stubFacultyAHasFacultyRole();
             when(facultyAssignmentRepository.existsByFacultyUser_IdAndLaboratory_Id(facultyAId, labY)).thenReturn(false);
 
             assertThat(scopeService.canAccessLaboratory(facultyAId, labY)).isFalse();
