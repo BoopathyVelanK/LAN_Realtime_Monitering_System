@@ -17,9 +17,11 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,19 +44,26 @@ class RiskScoreServiceTest {
     private EndpointDeviceRepository endpointDeviceRepository;
     @Mock
     private WebSocketRiskEventPublisher riskPublisher;
+    @Mock
+    private FacultyScopeService facultyScopeService;
 
     private RiskScoreService riskScoreService;
 
     private UUID ruleId;
     private UUID userId;
     private UUID endpointId;
+    /** The authenticated caller resolved by the controller from the JWT
+     * principal - distinct from the DetectionResult's userId. */
+    private UUID callerId;
 
     @BeforeEach
     void setUp() {
-        riskScoreService = new RiskScoreService(riskScoreRepository, endpointDeviceRepository, riskPublisher);
+        riskScoreService = new RiskScoreService(
+            riskScoreRepository, endpointDeviceRepository, riskPublisher, facultyScopeService);
         ruleId = UUID.randomUUID();
         userId = UUID.randomUUID();
         endpointId = UUID.randomUUID();
+        callerId = UUID.randomUUID();
     }
 
     private DetectionResult detectedResult(DetectionRule.Severity severity, UUID endpointId) {
@@ -352,9 +361,10 @@ class RiskScoreServiceTest {
 
     @Test
     void getAll_noRows_returnsEmptyList() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
         when(riskScoreRepository.findAllByOrderByScoreDesc()).thenReturn(List.of());
 
-        List<RiskScoreResponse> result = riskScoreService.getAll();
+        List<RiskScoreResponse> result = riskScoreService.getAll(callerId);
 
         assertTrue(result.isEmpty());
         verifyNoInteractions(endpointDeviceRepository);
@@ -380,9 +390,10 @@ class RiskScoreServiceTest {
         lowest.setScore((short) 10);
         lowest.setLevel(RiskScore.Level.LOW);
 
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
         when(riskScoreRepository.findAllByOrderByScoreDesc()).thenReturn(List.of(highest, lowest));
 
-        List<RiskScoreResponse> result = riskScoreService.getAll();
+        List<RiskScoreResponse> result = riskScoreService.getAll(callerId);
 
         assertEquals(2, result.size());
         assertEquals(endpointId, result.get(0).endpointId());
@@ -402,9 +413,10 @@ class RiskScoreServiceTest {
     @Test
     void getForEndpoint_found_mapsFieldsCorrectly() {
         RiskScore existing = riskScoreWith((short) 45, RiskScore.Level.HIGH);
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
         when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.of(existing));
 
-        RiskScoreResponse result = riskScoreService.getForEndpoint(endpointId);
+        RiskScoreResponse result = riskScoreService.getForEndpoint(endpointId, callerId);
 
         assertEquals(endpointId, result.endpointId());
         assertEquals((short) 45, result.score());
@@ -417,12 +429,69 @@ class RiskScoreServiceTest {
     void getForEndpoint_missingRow_throwsResourceNotFoundException() {
         // No synthetic SAFE/0 fallback - a missing row is a 404, not a
         // default response. See RiskScoreService.getForEndpoint javadoc.
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
         when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class,
-            () -> riskScoreService.getForEndpoint(endpointId));
+            () -> riskScoreService.getForEndpoint(endpointId, callerId));
 
         verifyNoInteractions(endpointDeviceRepository);
+    }
+
+    // =====================================================================
+    // RBAC / Faculty scope (Phase 2)
+    // =====================================================================
+
+    @Test
+    void getAll_facultyNoAssignedLabs_returnsEmptyNotGlobalFeed() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.accessibleLaboratoryIds(callerId)).thenReturn(Set.of());
+
+        List<RiskScoreResponse> result = riskScoreService.getAll(callerId);
+
+        assertTrue(result.isEmpty());
+        verifyNoInteractions(riskScoreRepository);
+    }
+
+    @Test
+    void getAll_facultyWithAssignedLabs_usesLabScopedQueryNeverGlobalFeed() {
+        UUID labId = UUID.randomUUID();
+        RiskScore score = riskScoreWith((short) 20, RiskScore.Level.LOW);
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.accessibleLaboratoryIds(callerId)).thenReturn(Set.of(labId));
+        when(riskScoreRepository.findByEndpoint_Lab_IdInOrderByScoreDesc(Set.of(labId)))
+            .thenReturn(List.of(score));
+
+        List<RiskScoreResponse> result = riskScoreService.getAll(callerId);
+
+        assertEquals(1, result.size());
+        verify(riskScoreRepository, never()).findAllByOrderByScoreDesc();
+    }
+
+    @Test
+    void getForEndpoint_facultyOwnEndpoint_succeeds() {
+        RiskScore existing = riskScoreWith((short) 45, RiskScore.Level.HIGH);
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(true);
+        when(riskScoreRepository.findByEndpoint_Id(endpointId)).thenReturn(Optional.of(existing));
+
+        RiskScoreResponse result = riskScoreService.getForEndpoint(endpointId, callerId);
+
+        assertEquals(endpointId, result.endpointId());
+    }
+
+    @Test
+    void getForEndpoint_facultyAnotherFacultysEndpoint_deniedBeforeRepositoryLookup() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class,
+            () -> riskScoreService.getForEndpoint(endpointId, callerId));
+
+        // Scope is checked before the repository is ever consulted, so a
+        // Faculty caller probing an out-of-scope id never learns whether a
+        // RiskScore row exists for it.
+        verifyNoInteractions(riskScoreRepository);
     }
 
     // =====================================================================

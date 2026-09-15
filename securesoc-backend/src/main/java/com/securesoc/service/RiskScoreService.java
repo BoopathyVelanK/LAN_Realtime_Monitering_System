@@ -8,11 +8,13 @@ import com.securesoc.entity.RiskScore;
 import com.securesoc.exception.ResourceNotFoundException;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.RiskScoreRepository;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -26,10 +28,13 @@ import java.util.UUID;
  *   <li>Wired into {@link com.securesoc.detection.DetectionEngine} as of
  *       Checkpoint B (see {@code DetectionEngineTest},
  *       {@code RiskScorePersistenceIntegrationTest}). The read methods below
- *       ({@link #getAll()}, {@link #getForEndpoint(UUID)}) and
+ *       ({@link #getAll(UUID)}, {@link #getForEndpoint(UUID, UUID)}) and
  *       {@code RiskScoreController}/{@code RiskScoreResponse} are
  *       Checkpoint C - read-only exposure of already-persisted scores, no
- *       change to {@link #recordDetection} or the scoring formula.</li>
+ *       change to {@link #recordDetection} or the scoring formula. Phase 2
+ *       (RBAC) added the {@code callerId} parameter to both for Faculty
+ *       scope enforcement via {@link FacultyScopeService} - see each
+ *       method's own javadoc.</li>
  * </ul>
  *
  * Design decisions (approved proposal - see project risk-engine design doc;
@@ -82,15 +87,18 @@ public class RiskScoreService {
     private final RiskScoreRepository riskScoreRepository;
     private final EndpointDeviceRepository endpointDeviceRepository;
     private final WebSocketRiskEventPublisher riskPublisher;
+    private final FacultyScopeService facultyScopeService;
 
     public RiskScoreService(
         RiskScoreRepository riskScoreRepository,
         EndpointDeviceRepository endpointDeviceRepository,
-        WebSocketRiskEventPublisher riskPublisher
+        WebSocketRiskEventPublisher riskPublisher,
+        FacultyScopeService facultyScopeService
     ) {
         this.riskScoreRepository = riskScoreRepository;
         this.endpointDeviceRepository = endpointDeviceRepository;
         this.riskPublisher = riskPublisher;
+        this.facultyScopeService = facultyScopeService;
     }
 
     /**
@@ -144,17 +152,39 @@ public class RiskScoreService {
      * simply has no row and is absent from this list (see class javadoc:
      * this checkpoint deliberately does not synthesize a default
      * SAFE/0 entry for endpoints that have never been scored).
+     *
+     * {@code callerId} is the authenticated caller resolved by the
+     * controller from the JWT principal. Admin ({@link
+     * FacultyScopeService#isGlobalScope}) gets exactly the previous
+     * unscoped behavior. A Faculty caller gets a lab-scoped query
+     * ({@link RiskScoreRepository#findByEndpoint_Lab_IdInOrderByScoreDesc})
+     * instead of the unscoped {@code findAllByOrderByScoreDesc} - never a
+     * findAll() filtered afterward in Java.
      */
     @Transactional(readOnly = true)
-    public List<RiskScoreResponse> getAll() {
-        return riskScoreRepository.findAllByOrderByScoreDesc().stream()
-            .map(RiskScoreService::toResponse)
-            .toList();
+    public List<RiskScoreResponse> getAll(UUID callerId) {
+        List<RiskScore> scores = facultyScopeService.isGlobalScope(callerId)
+            ? riskScoreRepository.findAllByOrderByScoreDesc()
+            : scopedRiskScores(callerId);
+        return scores.stream().map(RiskScoreService::toResponse).toList();
+    }
+
+    private List<RiskScore> scopedRiskScores(UUID callerId) {
+        Set<UUID> labIds = facultyScopeService.accessibleLaboratoryIds(callerId);
+        return labIds.isEmpty()
+            ? List.of()
+            : riskScoreRepository.findByEndpoint_Lab_IdInOrderByScoreDesc(labIds);
     }
 
     /**
      * Returns the persisted {@link RiskScore} for one endpoint - backs
      * {@code GET /risk-scores/{endpointId}}. Read-only; never creates a row.
+     *
+     * Scope is checked before the repository lookup: a Faculty caller not
+     * authorized for {@code endpointId} is denied with 403 regardless of
+     * whether a RiskScore row exists for it, so this endpoint never
+     * distinguishes "out of scope" from "doesn't exist" for a Faculty
+     * caller - see {@link AccessDeniedException}.
      *
      * @throws ResourceNotFoundException if {@code endpointId} has no
      *         persisted {@code RiskScore} row (never detected against, or
@@ -163,7 +193,11 @@ public class RiskScoreService {
      *         by a synthetic SAFE/0 response (see class javadoc).
      */
     @Transactional(readOnly = true)
-    public RiskScoreResponse getForEndpoint(UUID endpointId) {
+    public RiskScoreResponse getForEndpoint(UUID endpointId, UUID callerId) {
+        if (!facultyScopeService.isGlobalScope(callerId)
+            && !facultyScopeService.canAccessEndpoint(callerId, endpointId)) {
+            throw new AccessDeniedException("Not authorized for endpoint: " + endpointId);
+        }
         return riskScoreRepository.findByEndpoint_Id(endpointId)
             .map(RiskScoreService::toResponse)
             .orElseThrow(() -> new ResourceNotFoundException("RiskScore not found for endpoint: " + endpointId));

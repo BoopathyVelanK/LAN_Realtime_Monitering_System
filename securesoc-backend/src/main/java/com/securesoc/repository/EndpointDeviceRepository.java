@@ -38,6 +38,13 @@ public interface EndpointDeviceRepository extends JpaRepository<EndpointDevice, 
     @Query("SELECT e.id FROM EndpointDevice e WHERE e.lab.id IN :labIds")
     Set<UUID> findIdsByLab_IdIn(@Param("labIds") Collection<UUID> labIds);
 
+    /** Backs EndpointService.listAll for a Faculty caller (GET /endpoints) -
+     * full-entity variant of {@link #findIdsByLab_IdIn}, needed because the
+     * endpoint listing response requires the whole EndpointSummaryResponse
+     * shape, not just IDs. Same scoping guarantee: an endpoint outside the
+     * caller's assigned labs can never appear here. */
+    List<EndpointDevice> findByLab_IdIn(Collection<UUID> labIds);
+
     /** Backs FacultyScopeService.canAccessEndpoint - single existence
      * check against the caller's already-resolved allowed labs, so an
      * endpoint ID for a lab the caller isn't assigned to can never

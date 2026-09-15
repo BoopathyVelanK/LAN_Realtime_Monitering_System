@@ -9,6 +9,7 @@ import com.securesoc.service.AgentService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 /** Endpoints consumed exclusively by securesoc-agent/agent.py - see that
@@ -32,6 +33,12 @@ public class AgentController {
         return ResponseEntity.ok(agentService.register(request, registrationSecret));
     }
 
+    /** Gated on ROLE_AGENT (granted only by AgentTokenAuthFilter via a
+     * valid X-Agent-Token) rather than left to just "authenticated" -
+     * register() above is deliberately left ungated since it runs before
+     * any authentication exists (see its own shared-secret check in
+     * AgentService.register). */
+    @PreAuthorize("hasRole('AGENT')")
     @PostMapping("/heartbeat")
     public ResponseEntity<AgentHeartbeatResponse> heartbeat(
         @Valid @RequestBody AgentHeartbeatRequest request,
