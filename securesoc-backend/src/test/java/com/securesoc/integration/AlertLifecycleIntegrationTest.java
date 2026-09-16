@@ -77,7 +77,7 @@ public class AlertLifecycleIntegrationTest {
         testUser.setPasswordHash(passwordEncoder.encode("password"));
         testUser.setFullName("Alert Tester");
 
-        Role analystRole = new Role("ROLE_ANALYST");
+        Role analystRole = new Role("ADMIN");
         roleRepository.save(analystRole);
         testUser.getRoles().add(analystRole);
 
