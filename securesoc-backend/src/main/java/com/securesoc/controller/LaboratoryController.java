@@ -1,8 +1,10 @@
 package com.securesoc.controller;
 
 import com.securesoc.dto.LaboratoryResponse;
+import com.securesoc.security.SecurityUserDetails;
 import com.securesoc.service.LaboratoryService;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -13,10 +15,9 @@ import java.util.List;
  * FRONTEND_INTEGRATION_AUDIT.md). Read-only, same rationale as
  * DepartmentController.
  *
- * Phase-1 role gate only (Admin/Faculty, not agents) - this list is lab
- * names only, not scoped to a Faculty caller's assigned labs. Scoping
- * this to "assigned labs only" is a known remaining gap; see the RBAC
- * audit report rather than a TODO here. */
+ * Faculty scope (which laboratories a given Faculty caller may see) is
+ * enforced in LaboratoryService via FacultyScopeService - this class only
+ * gates the coarse role check and resolves the authenticated caller. */
 @RestController
 @RequestMapping("/laboratories")
 @PreAuthorize("hasAnyRole('ADMIN','FACULTY')")
@@ -29,7 +30,7 @@ public class LaboratoryController {
     }
 
     @GetMapping
-    public List<LaboratoryResponse> listLaboratories() {
-        return laboratoryService.listAll();
+    public List<LaboratoryResponse> listLaboratories(@AuthenticationPrincipal SecurityUserDetails userDetails) {
+        return laboratoryService.listAll(userDetails.getId());
     }
 }
