@@ -3,8 +3,6 @@ package com.securesoc.security;
 import com.securesoc.repository.UserRepository;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -40,11 +38,15 @@ import java.util.UUID;
  * connections are ever established, unlike the REST filter chain's
  * fall-through-to-anonymous behavior for public endpoints (there are no
  * public WebSocket topics).
+ *
+ * Logging note: this class must never log the request URI or query
+ * string. The token is transported as a query parameter (see above), so
+ * request.getURI() contains the raw JWT access token - logging it would
+ * write live credentials into application logs on every handshake
+ * attempt, successful or not.
  */
 @Component
 public class WebSocketAuthHandshakeInterceptor implements HandshakeInterceptor {
-
-    private static final Logger log = LoggerFactory.getLogger(WebSocketAuthHandshakeInterceptor.class);
 
     static final String USER_ID_ATTRIBUTE = "userId";
     static final String USERNAME_ATTRIBUTE = "username";
@@ -64,14 +66,8 @@ public class WebSocketAuthHandshakeInterceptor implements HandshakeInterceptor {
         @NonNull WebSocketHandler wsHandler,
         @NonNull Map<String, Object> attributes
     ) {
-        // TEMP DEBUG (Phase 6 /ws/info 401 investigation - remove once resolved)
-        log.info("[WS-DEBUG][WebSocketAuthHandshakeInterceptor] beforeHandshake() called for uri={}",
-            request.getURI());
-
         String token = extractToken(request);
         if (token == null || token.isBlank()) {
-            log.info("[WS-DEBUG][WebSocketAuthHandshakeInterceptor] rejecting - no token in query string for uri={}",
-                request.getURI());
             response.setStatusCode(HttpStatus.UNAUTHORIZED);
             return false;
         }
@@ -88,8 +84,6 @@ public class WebSocketAuthHandshakeInterceptor implements HandshakeInterceptor {
                 .orElse(false);
 
             if (!userValid) {
-                log.info("[WS-DEBUG][WebSocketAuthHandshakeInterceptor] rejecting - user not valid/enabled for uri={}",
-                    request.getURI());
                 response.setStatusCode(HttpStatus.UNAUTHORIZED);
                 return false;
             }
@@ -100,11 +94,8 @@ public class WebSocketAuthHandshakeInterceptor implements HandshakeInterceptor {
             // subscriptions, unused for anything beyond that today.
             attributes.put(USER_ID_ATTRIBUTE, userId.toString());
             attributes.put(USERNAME_ATTRIBUTE, claims.get("username", String.class));
-            log.info("[WS-DEBUG][WebSocketAuthHandshakeInterceptor] accepted handshake for uri={}", request.getURI());
             return true;
         } catch (JwtException | IllegalArgumentException ex) {
-            log.info("[WS-DEBUG][WebSocketAuthHandshakeInterceptor] rejecting - token validation failed ({}) for uri={}",
-                ex.getMessage(), request.getURI());
             response.setStatusCode(HttpStatus.UNAUTHORIZED);
             return false;
         }
