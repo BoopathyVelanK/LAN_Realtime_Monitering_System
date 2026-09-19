@@ -4,75 +4,55 @@ import com.securesoc.dto.AlertResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.Instant;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 /**
- * Unit tests for {@link WebSocketAlertEventPublisher}.
- *
- * These tests call the publisher directly without a live Spring context or
- * transaction, so publishAlert() falls through to the immediate
- * (no-transaction-active) path and sends synchronously - the
- * TransactionSynchronizationManager.isActualTransactionActive() check returns
- * false in a plain Mockito test. That exercises the correct code path for
- * verifying the destination and payload without needing a full Spring context.
+ * Unit tests for {@link WebSocketAlertEventPublisher}. These tests call
+ * the publisher directly without a live Spring context or transaction, so
+ * publishAlert() falls through to the immediate (no-transaction-active)
+ * path and delegates synchronously - the
+ * TransactionSynchronizationManager.isActualTransactionActive() check
+ * returns false in a plain Mockito test. Who actually receives the
+ * message is ScopedWebSocketDelivery's job and is tested in
+ * ScopedWebSocketDeliveryTest, not here - this class only verifies the
+ * publisher delegates to it with the right destination/payload/endpointId.
  */
 @ExtendWith(MockitoExtension.class)
 class WebSocketAlertEventPublisherTest {
 
     @Mock
-    private SimpMessagingTemplate messagingTemplate;
+    private ScopedWebSocketDelivery scopedDelivery;
 
     private WebSocketAlertEventPublisher publisher;
 
     @BeforeEach
     void setUp() {
-        publisher = new WebSocketAlertEventPublisher(messagingTemplate);
+        publisher = new WebSocketAlertEventPublisher(scopedDelivery);
     }
 
     @Test
-    void publishAlert_sendsToCorrectTopic() {
+    void publishAlert_delegatesToScopedDeliveryWithCorrectDestinationPayloadAndEndpointId() {
         AlertResponse alert = sampleAlert();
 
         publisher.publishAlert(alert);
 
-        verify(messagingTemplate).convertAndSend(WebSocketAlertEventPublisher.ALERT_TOPIC, alert);
+        verify(scopedDelivery).deliverToAuthorizedUsers(
+            WebSocketAlertEventPublisher.ALERT_DESTINATION, alert, alert.endpointId());
     }
 
     @Test
-    void publishAlert_payloadIsPassedThrough() {
-        AlertResponse alert = sampleAlert();
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
-        publisher.publishAlert(alert);
-
-        verify(messagingTemplate).convertAndSend(
-            org.mockito.ArgumentMatchers.eq(WebSocketAlertEventPublisher.ALERT_TOPIC),
-            payloadCaptor.capture()
-        );
-        assertEquals(alert, payloadCaptor.getValue());
-    }
-
-    @Test
-    void publishAlert_destinationIsTopicAlerts() {
-        ArgumentCaptor<String> destinationCaptor = ArgumentCaptor.forClass(String.class);
-
+    void publishAlert_destinationIsQueueAlerts() {
         publisher.publishAlert(sampleAlert());
 
-        verify(messagingTemplate).convertAndSend(
-            destinationCaptor.capture(),
-            org.mockito.ArgumentMatchers.any(Object.class)
-        );
-        assertEquals("/topic/alerts", destinationCaptor.getValue());
+        verify(scopedDelivery).deliverToAuthorizedUsers(eq("/queue/alerts"), any(), any());
     }
 
     private AlertResponse sampleAlert() {

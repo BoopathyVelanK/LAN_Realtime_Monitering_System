@@ -2,25 +2,26 @@ package com.securesoc.service;
 
 import com.securesoc.dto.EndpointStatusEvent;
 import com.securesoc.entity.EndpointDevice;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 /**
- * The only class in the codebase that knows the WebSocket topic name and
- * touches SimpMessagingTemplate directly - see EndpointEventPublisher's
- * Javadoc for why that's a deliberate boundary. Builds the DTO here
- * (rather than have callers build it) so the wire shape has exactly one
- * source of truth.
+ * The only class in the codebase that knows the WebSocket destination name
+ * for endpoint-status events - see EndpointEventPublisher's Javadoc for
+ * why that's a deliberate boundary. Builds the DTO here (rather than have
+ * callers build it) so the wire shape has exactly one source of truth.
+ * Delivery scoping (who is authorized to receive a given endpoint's
+ * status) is delegated to {@link ScopedWebSocketDelivery} - see that
+ * class for the Admin/Faculty eligibility rule.
  */
 @Service
 public class WebSocketEndpointEventPublisher implements EndpointEventPublisher {
 
-    private static final String ENDPOINT_STATUS_TOPIC = "/topic/endpoints/status";
+    private static final String ENDPOINT_STATUS_DESTINATION = "/queue/endpoints/status";
 
-    private final SimpMessagingTemplate messagingTemplate;
+    private final ScopedWebSocketDelivery scopedDelivery;
 
-    public WebSocketEndpointEventPublisher(SimpMessagingTemplate messagingTemplate) {
-        this.messagingTemplate = messagingTemplate;
+    public WebSocketEndpointEventPublisher(ScopedWebSocketDelivery scopedDelivery) {
+        this.scopedDelivery = scopedDelivery;
     }
 
     @Override
@@ -32,6 +33,6 @@ public class WebSocketEndpointEventPublisher implements EndpointEventPublisher {
             device.getLastHeartbeatAt(),
             device.getLab() != null ? device.getLab().getName() : null
         );
-        messagingTemplate.convertAndSend(ENDPOINT_STATUS_TOPIC, event);
+        scopedDelivery.deliverToAuthorizedUsers(ENDPOINT_STATUS_DESTINATION, event, device.getId());
     }
 }

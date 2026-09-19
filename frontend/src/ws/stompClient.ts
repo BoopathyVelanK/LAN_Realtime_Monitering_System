@@ -13,10 +13,10 @@ export interface LiveFeedHandlers {
 }
 
 /** Connects to the backend's real STOMP/SockJS endpoint and subscribes to
- * the three dashboard-relevant topics (see WebSocketConfig's Javadoc on
- * the backend for the full topic list — endpoint-scoped topics are used
- * by the endpoint detail page, not this dashboard-level connection).
- * Returns a stop function. */
+ * this user's three private queues (RBAC Phase 3 — the backend delivers
+ * to each authenticated user individually, scoped to their assigned
+ * laboratories; there is no shared broadcast topic to subscribe to
+ * instead). Returns a stop function. */
 export function startLiveFeed(handlers: LiveFeedHandlers): () => void {
   const token = tokenStorage.getAccessToken();
 
@@ -30,13 +30,13 @@ export function startLiveFeed(handlers: LiveFeedHandlers): () => void {
   client.onConnect = () => {
     handlers.onConnected?.();
 
-    client.subscribe('/topic/alerts', (message: IMessage) => {
+    client.subscribe('/user/queue/alerts', (message: IMessage) => {
       handlers.onAlert?.(JSON.parse(message.body) as AlertResponse);
     });
-    client.subscribe('/topic/endpoints/status', (message: IMessage) => {
+    client.subscribe('/user/queue/endpoints/status', (message: IMessage) => {
       handlers.onStatus?.(JSON.parse(message.body) as EndpointStatusEvent);
     });
-    client.subscribe('/topic/risk', (message: IMessage) => {
+    client.subscribe('/user/queue/risk', (message: IMessage) => {
       handlers.onRisk?.(JSON.parse(message.body) as RiskScoreResponse);
     });
   };
