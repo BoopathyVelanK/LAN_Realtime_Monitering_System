@@ -76,7 +76,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void adminReceivesEventForAnyEndpoint() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("admin1")));
+        SimpUser admin1 = connected("admin1");
+        when(userRegistry.getUsers()).thenReturn(Set.of(admin1));
         when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(userEntity(adminId)));
         when(facultyScopeService.isGlobalScope(adminId)).thenReturn(true);
 
@@ -88,7 +89,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void adminReceivesEventWithNullEndpointId() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("admin1")));
+        SimpUser admin1 = connected("admin1");
+        when(userRegistry.getUsers()).thenReturn(Set.of(admin1));
         when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(userEntity(adminId)));
         when(facultyScopeService.isGlobalScope(adminId)).thenReturn(true);
 
@@ -100,7 +102,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void facultyAssignedToLabA_receivesEventFromEndpointInLabA() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("facultyA")));
+        SimpUser facultyA = connected("facultyA");
+        when(userRegistry.getUsers()).thenReturn(Set.of(facultyA));
         when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(userEntity(facultyAId)));
         when(facultyScopeService.isGlobalScope(facultyAId)).thenReturn(false);
         when(facultyScopeService.canAccessEndpoint(facultyAId, endpointInLabA)).thenReturn(true);
@@ -118,7 +121,8 @@ class ScopedWebSocketDeliveryTest {
      */
     @Test
     void facultyAssignedToLabA_doesNotReceiveEventFromEndpointInLabB() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("facultyA")));
+        SimpUser facultyA = connected("facultyA");
+        when(userRegistry.getUsers()).thenReturn(Set.of(facultyA));
         when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(userEntity(facultyAId)));
         when(facultyScopeService.isGlobalScope(facultyAId)).thenReturn(false);
         when(facultyScopeService.canAccessEndpoint(facultyAId, endpointInLabB)).thenReturn(false);
@@ -130,7 +134,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void facultyReceivesNothingWhenEndpointIdIsNull() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("facultyA")));
+        SimpUser facultyA = connected("facultyA");
+        when(userRegistry.getUsers()).thenReturn(Set.of(facultyA));
         when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(userEntity(facultyAId)));
         when(facultyScopeService.isGlobalScope(facultyAId)).thenReturn(false);
 
@@ -142,7 +147,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void facultyWithZeroAssignments_receivesNoScopedEvents() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("facultyA")));
+        SimpUser facultyA = connected("facultyA");
+        when(userRegistry.getUsers()).thenReturn(Set.of(facultyA));
         when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(userEntity(facultyAId)));
         when(facultyScopeService.isGlobalScope(facultyAId)).thenReturn(false);
         when(facultyScopeService.canAccessEndpoint(facultyAId, endpointInLabA)).thenReturn(false);
@@ -154,7 +160,8 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void unknownConnectedPrincipal_failsClosedAndIsSkipped() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("ghost")));
+        SimpUser ghost = connected("ghost");
+        when(userRegistry.getUsers()).thenReturn(Set.of(ghost));
         when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
         delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
@@ -165,7 +172,10 @@ class ScopedWebSocketDeliveryTest {
 
     @Test
     void multipleConnectedUsers_onlyEligibleOnesReceiveDelivery() {
-        when(userRegistry.getUsers()).thenReturn(Set.of(connected("admin1"), connected("facultyA"), connected("facultyB")));
+        SimpUser admin1 = connected("admin1");
+        SimpUser facultyA = connected("facultyA");
+        SimpUser facultyB = connected("facultyB");
+        when(userRegistry.getUsers()).thenReturn(Set.of(admin1, facultyA, facultyB));
         when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(userEntity(adminId)));
         when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(userEntity(facultyAId)));
         when(userRepository.findByUsername("facultyB")).thenReturn(Optional.of(userEntity(facultyBId)));
