@@ -77,9 +77,12 @@ public class AlertLifecycleIntegrationTest {
         testUser.setPasswordHash(passwordEncoder.encode("password"));
         testUser.setFullName("Alert Tester");
 
-        Role analystRole = new Role("ROLE_ANALYST");
-        roleRepository.save(analystRole);
-        testUser.getRoles().add(analystRole);
+        // ADMIN is seeded by V2__seed_roles.sql on every migrated database
+        // (including this test's Testcontainers instance) - reuse it
+        // rather than inserting a duplicate row, which violates
+        // roles_name_key.
+        Role adminRole = roleRepository.findByName("ADMIN").orElseThrow();
+        testUser.getRoles().add(adminRole);
 
         testUser = userRepository.save(testUser);
 
@@ -111,7 +114,10 @@ public class AlertLifecycleIntegrationTest {
         alertRepository.deleteAll();
         ruleRepository.deleteAll();
         userRepository.deleteAll();
-        roleRepository.deleteAll();
+        // roleRepository.deleteAll() removed: ADMIN is now the shared,
+        // Flyway-seeded row (see setup()), not a row this test owns -
+        // deleting it here would break whichever @Test method in this
+        // class runs second.
     }
 
     @Test

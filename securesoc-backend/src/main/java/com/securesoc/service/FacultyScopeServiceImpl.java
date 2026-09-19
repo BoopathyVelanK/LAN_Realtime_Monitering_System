@@ -2,6 +2,7 @@ package com.securesoc.service;
 
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.FacultyAssignmentRepository;
+import com.securesoc.repository.LaboratoryRepository;
 import com.securesoc.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
@@ -16,13 +17,16 @@ public class FacultyScopeServiceImpl implements FacultyScopeService {
     private final UserRepository userRepository;
     private final FacultyAssignmentRepository facultyAssignmentRepository;
     private final EndpointDeviceRepository endpointDeviceRepository;
+    private final LaboratoryRepository laboratoryRepository;
 
     public FacultyScopeServiceImpl(UserRepository userRepository,
                                     FacultyAssignmentRepository facultyAssignmentRepository,
-                                    EndpointDeviceRepository endpointDeviceRepository) {
+                                    EndpointDeviceRepository endpointDeviceRepository,
+                                    LaboratoryRepository laboratoryRepository) {
         this.userRepository = userRepository;
         this.facultyAssignmentRepository = facultyAssignmentRepository;
         this.endpointDeviceRepository = endpointDeviceRepository;
+        this.laboratoryRepository = laboratoryRepository;
     }
 
     @Override
@@ -35,7 +39,7 @@ public class FacultyScopeServiceImpl implements FacultyScopeService {
     @Override
     public Set<UUID> accessibleLaboratoryIds(UUID userId) {
         if (isGlobalScope(userId)) {
-            return Set.of(); // Admin is unrestricted - see interface Javadoc, callers must check isGlobalScope first
+            return Set.of();
         }
         return facultyAssignmentRepository.findLaboratoryIdsByFacultyUser_Id(userId);
     }
@@ -62,6 +66,18 @@ public class FacultyScopeServiceImpl implements FacultyScopeService {
             return Set.of();
         }
         return endpointDeviceRepository.findAssignedStudentIdsByLab_IdIn(labIds);
+    }
+
+    @Override
+    public Set<UUID> accessibleDepartmentIds(UUID userId) {
+        if (isGlobalScope(userId)) {
+            return Set.of();
+        }
+        Set<UUID> labIds = accessibleLaboratoryIds(userId);
+        if (labIds.isEmpty()) {
+            return Set.of();
+        }
+        return laboratoryRepository.findDepartmentIdsByIdIn(labIds);
     }
 
     @Override

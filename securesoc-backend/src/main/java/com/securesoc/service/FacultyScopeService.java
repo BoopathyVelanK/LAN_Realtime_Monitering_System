@@ -14,12 +14,13 @@ import java.util.UUID;
  * checked against a set for an Admin.
  *
  * FACULTY: scope is resolved transitively, and ONLY transitively -
- * FacultyAssignment stores laboratory grants ONLY. Endpoint and student
- * access are always derived (Laboratory -> EndpointDevice -> assigned
- * Student), never stored as a separate Faculty->Endpoint or
- * Faculty->Student mapping. This is deliberate: a redundant mapping could
- * drift out of sync with the lab assignment it was derived from and
- * silently grant access that no longer reflects reality.
+ * FacultyAssignment stores laboratory grants ONLY. Endpoint, student, and
+ * department access are always derived (Laboratory -> EndpointDevice ->
+ * assigned Student; Laboratory -> Department), never stored as a separate
+ * Faculty->Endpoint, Faculty->Student, or Faculty->Department mapping.
+ * This is deliberate: a redundant mapping could drift out of sync with
+ * the lab assignment it was derived from and silently grant access that
+ * no longer reflects reality.
  *
  * Any other role (LAB_ASSISTANT, AUDITOR, or a user with no recognized
  * role) resolves to empty scope - fail closed, not fail open - until
@@ -44,6 +45,13 @@ public interface FacultyScopeService {
     /** Student IDs assigned to an endpoint in any of this user's
      * accessible laboratories. Empty for a non-Faculty, non-Admin user. */
     Set<UUID> accessibleStudentIds(UUID userId);
+
+    /** Department IDs containing at least one laboratory this user is
+     * assigned to - derived transitively via Laboratory.department, never
+     * a stored Faculty->Department mapping (see class Javadoc). Empty for
+     * a non-Faculty, non-Admin user. Undefined/unused for Admin - check
+     * {@link #isGlobalScope} first. */
+    Set<UUID> accessibleDepartmentIds(UUID userId);
 
     /** True if userId is ADMIN, or is FACULTY with an explicit
      * FacultyAssignment for laboratoryId. */

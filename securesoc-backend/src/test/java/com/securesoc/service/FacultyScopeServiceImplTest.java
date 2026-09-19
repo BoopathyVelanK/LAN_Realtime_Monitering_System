@@ -4,6 +4,7 @@ import com.securesoc.entity.Role;
 import com.securesoc.entity.User;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.FacultyAssignmentRepository;
+import com.securesoc.repository.LaboratoryRepository;
 import com.securesoc.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -40,6 +41,8 @@ class FacultyScopeServiceImplTest {
     private FacultyAssignmentRepository facultyAssignmentRepository;
     @Mock
     private EndpointDeviceRepository endpointDeviceRepository;
+    @Mock
+    private LaboratoryRepository laboratoryRepository;
 
     private FacultyScopeServiceImpl scopeService;
 
@@ -55,7 +58,8 @@ class FacultyScopeServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        scopeService = new FacultyScopeServiceImpl(userRepository, facultyAssignmentRepository, endpointDeviceRepository);
+        scopeService = new FacultyScopeServiceImpl(
+            userRepository, facultyAssignmentRepository, endpointDeviceRepository, laboratoryRepository);
 
         adminId = UUID.randomUUID();
         facultyAId = UUID.randomUUID();
@@ -75,21 +79,11 @@ class FacultyScopeServiceImplTest {
         return user;
     }
 
-    // Faculty A is assigned to labX only. Faculty B is assigned to labY
-    // only - representing "another Faculty member's scope" throughout.
     private void stubFacultyAAssignedToLabXOnly() {
         when(userRepository.findById(facultyAId)).thenReturn(Optional.of(userWithRole("FACULTY")));
         when(facultyAssignmentRepository.findLaboratoryIdsByFacultyUser_Id(facultyAId)).thenReturn(Set.of(labX));
     }
 
-    // Lighter-weight variant for tests that exercise canAccessLaboratory()
-    // only. That method checks the caller's role and then delegates
-    // directly to facultyAssignmentRepository.existsByFacultyUser_IdAndLaboratory_Id(...)
-    // - it never resolves the full assigned-laboratory ID set via
-    // findLaboratoryIdsByFacultyUser_Id(...). Stubbing that unused method
-    // for a canAccessLaboratory-only test trips Mockito's strict-stubbing
-    // UnnecessaryStubbingException, so those tests stub only what their
-    // code path actually consumes.
     private void stubFacultyAHasFacultyRole() {
         when(userRepository.findById(facultyAId)).thenReturn(Optional.of(userWithRole("FACULTY")));
     }
@@ -110,9 +104,6 @@ class FacultyScopeServiceImplTest {
             assertThat(scopeService.canAccessLaboratory(adminId, labX)).isTrue();
             assertThat(scopeService.canAccessLaboratory(adminId, labY)).isTrue();
 
-            // Admin's global access must never depend on any assignment
-            // row existing - proves this isn't accidentally "allowed
-            // because assignment lookup returned empty/true by mistake".
             verify(facultyAssignmentRepository, never()).existsByFacultyUser_IdAndLaboratory_Id(any(), any());
         }
 
@@ -204,16 +195,6 @@ class FacultyScopeServiceImplTest {
             assertThat(scopeService.canAccessStudent(facultyAId, studentOnEndpointInLabY)).isFalse();
         }
 
-        /**
-         * Explicit ID-manipulation / cross-faculty isolation check: Faculty
-         * A must not obtain Faculty B's scope merely by supplying an ID
-         * that belongs to B's lab/endpoint/student. Faculty A's resolved
-         * scope is always {labX} regardless of what ID is passed in - the
-         * repository stub only ever returns false for labY/endpointInLabY/
-         * studentOnEndpointInLabY because A's allowed-ID set never
-         * contains them, proving the check is against A's own resolved
-         * scope and not against the supplied ID's apparent validity.
-         */
         @Test
         void suppliedIdForAnotherFacultysLaboratoryDoesNotGrantAccess() {
             stubFacultyAAssignedToLabXOnly();
@@ -257,15 +238,42 @@ class FacultyScopeServiceImplTest {
 
         @Test
         void examModeAuthorizedElsewhereDoesNotCarryOverToUnassignedLab() {
-            // Faculty A has exam_mode_authorized=true for labX, but labY
-            // is a *different* laboratory they hold no assignment for at
-            // all. The query is keyed on (faculty, laboratory) together,
-            // so a true flag on one row can never leak to another lab.
             when(userRepository.findById(facultyAId)).thenReturn(Optional.of(userWithRole("FACULTY")));
             when(facultyAssignmentRepository.existsByFacultyUser_IdAndLaboratory_IdAndExamModeAuthorizedTrue(facultyAId, labY))
                 .thenReturn(false);
 
             assertThat(scopeService.hasExamModeAuthorization(facultyAId, labY)).isFalse();
+        }
+    }
+
+    @Nested
+    class AccessibleDepartmentIds {
+
+        @Test
+        void facultyAssignedToOneLab_returnsItsDepartment() {
+            UUID deptA = UUID.randomUUID();
+            stubFacultyAAssignedToLabXOnly();
+            when(laboratoryRepository.findDepartmentIdsByIdIn(Set.of(labX))).thenReturn(Set.of(deptA));
+
+            assertThat(scopeService.accessibleDepartmentIds(facultyAId)).containsExactly(deptA);
+        }
+
+        @Test
+        void facultyWithZeroAssignments_returnsEmptyWithoutQueryingLaboratories() {
+            when(userRepository.findById(facultyAId)).thenReturn(Optional.of(userWithRole("FACULTY")));
+            when(facultyAssignmentRepository.findLaboratoryIdsByFacultyUser_Id(facultyAId)).thenReturn(Set.of());
+
+            assertThat(scopeService.accessibleDepartmentIds(facultyAId)).isEmpty();
+            verify(laboratoryRepository, never()).findDepartmentIdsByIdIn(any());
+        }
+
+        @Test
+        void adminBypassesWithoutConsultingAssignmentsOrLaboratories() {
+            when(userRepository.findById(adminId)).thenReturn(Optional.of(userWithRole("ADMIN")));
+
+            assertThat(scopeService.accessibleDepartmentIds(adminId)).isEmpty();
+            verify(facultyAssignmentRepository, never()).findLaboratoryIdsByFacultyUser_Id(any());
+            verify(laboratoryRepository, never()).findDepartmentIdsByIdIn(any());
         }
     }
 

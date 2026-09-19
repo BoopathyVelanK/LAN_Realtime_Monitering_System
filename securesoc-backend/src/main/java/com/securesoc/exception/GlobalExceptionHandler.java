@@ -4,6 +4,7 @@ import com.securesoc.dto.ApiErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -21,6 +22,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({UnauthorizedException.class, BadCredentialsException.class})
     public ResponseEntity<ApiErrorResponse> handleUnauthorized(RuntimeException ex, HttpServletRequest request) {
         return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), request);
+    }
+
+    /** Fired both by @PreAuthorize role gates and by FacultyScopeService-based
+     * scope checks in the service layer (out-of-scope endpoint/alert/lab/
+     * student access) - both are "authenticated but not permitted", so both
+     * map to the same 403 shape. Message is deliberately generic-safe (it
+     * only ever names the id that was requested, never why another user's
+     * data does/doesn't exist), so this never leaks cross-tenant existence
+     * information beyond what the request itself already disclosed. */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage(), request);
     }
 
     @ExceptionHandler(AccountLockedException.class)

@@ -17,8 +17,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.security.access.AccessDeniedException;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -49,21 +54,42 @@ class AlertServiceTest {
     private AlertInsertExecutor alertInsertExecutor;
     @Mock
     private WebSocketAlertEventPublisher alertPublisher;
+    @Mock
+    private FacultyScopeService facultyScopeService;
 
     private AlertService alertService;
 
     private UUID ruleId;
     private UUID userId;
     private UUID endpointId;
+    /** The authenticated caller resolved by the controller from the JWT
+     * principal - kept distinct from {@code userId} (the DetectionResult's
+     * subject) even though several older tests below reuse {@code userId}
+     * for both, since acknowledgeAlert's userId parameter genuinely is
+     * both at once (see AlertService's javadoc on that method). */
+    private UUID callerId;
 
     @BeforeEach
     void setUp() {
         alertService = new AlertService(
             alertRepository, detectionRuleRepository, userRepository, endpointDeviceRepository,
-            alertInsertExecutor, alertPublisher);
+            alertInsertExecutor, alertPublisher, facultyScopeService);
         ruleId = UUID.randomUUID();
         userId = UUID.randomUUID();
         endpointId = UUID.randomUUID();
+        callerId = UUID.randomUUID();
+    }
+
+    private Alert alertWithEndpoint(UUID id, UUID endpointId) {
+        Alert alert = new Alert();
+        alert.setId(id);
+        alert.setStatus(Alert.Status.OPEN);
+        if (endpointId != null) {
+            EndpointDevice endpoint = new EndpointDevice();
+            endpoint.setId(endpointId);
+            alert.setEndpoint(endpoint);
+        }
+        return alert;
     }
 
     private DetectionRule rule() {
@@ -483,6 +509,7 @@ class AlertServiceTest {
         User user = new User();
         user.setId(userId);
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(userId)).thenReturn(true);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -498,11 +525,195 @@ class AlertServiceTest {
         alert.setId(alertId);
         alert.setStatus(Alert.Status.OPEN);
         when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
         when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        alertService.resolveAlert(alertId);
+        alertService.resolveAlert(alertId, callerId);
 
         verify(alertPublisher).publishAlert(any(AlertResponse.class));
+    }
+
+    // =====================================================================
+    // RBAC / Faculty scope (Phase 2)
+    // =====================================================================
+
+    // --- GET /alerts -----------------------------------------------------
+
+    @Test
+    void getAlerts_admin_returnsSystemWideUnfiltered() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
+        Alert alert = alertWithEndpoint(UUID.randomUUID(), endpointId);
+        when(alertRepository.findAllByOrderByCreatedAtDesc(any()))
+            .thenReturn(new PageImpl<>(List.of(alert)));
+
+        List<AlertResponse> result = alertService.getAlerts(null, null, callerId);
+
+        assertEquals(1, result.size());
+        verify(facultyScopeService, never()).accessibleLaboratoryIds(any());
+    }
+
+    @Test
+    void getAlerts_facultyOwnEndpoint_succeeds() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(true);
+        Alert alert = alertWithEndpoint(UUID.randomUUID(), endpointId);
+        when(alertRepository.findByEndpoint_IdOrderByCreatedAtDesc(eq(endpointId), any()))
+            .thenReturn(new PageImpl<>(List.of(alert)));
+
+        List<AlertResponse> result = alertService.getAlerts(endpointId, null, callerId);
+
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void getAlerts_facultyAnotherFacultysEndpoint_denied() {
+        UUID otherEndpointId = UUID.randomUUID();
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, otherEndpointId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class,
+            () -> alertService.getAlerts(otherEndpointId, null, callerId));
+
+        verify(alertRepository, never()).findByEndpoint_IdOrderByCreatedAtDesc(any(), any());
+    }
+
+    @Test
+    void getAlerts_facultyNoEndpointId_usesLabScopedQueryNeverGlobalFeed() {
+        UUID labId = UUID.randomUUID();
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.accessibleLaboratoryIds(callerId)).thenReturn(Set.of(labId));
+        Alert alert = alertWithEndpoint(UUID.randomUUID(), endpointId);
+        when(alertRepository.findByEndpoint_Lab_IdInOrderByCreatedAtDesc(eq(Set.of(labId)), any()))
+            .thenReturn(new PageImpl<>(List.of(alert)));
+
+        List<AlertResponse> result = alertService.getAlerts(null, null, callerId);
+
+        assertEquals(1, result.size());
+        verify(alertRepository, never()).findAllByOrderByCreatedAtDesc(any());
+    }
+
+    @Test
+    void getAlerts_facultyWithNoAssignedLabs_returnsEmptyNotGlobalFeed() {
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.accessibleLaboratoryIds(callerId)).thenReturn(Set.of());
+
+        List<AlertResponse> result = alertService.getAlerts(null, null, callerId);
+
+        assertTrue(result.isEmpty());
+        verifyNoInteractions(alertRepository);
+    }
+
+    // --- GET /alerts/{id} --------------------------------------------------
+
+    @Test
+    void getAlertById_admin_bypassesScope() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, UUID.randomUUID());
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(true);
+
+        AlertResponse result = alertService.getAlertById(alertId, callerId);
+
+        assertEquals(alertId, result.id());
+        verify(facultyScopeService, never()).canAccessEndpoint(any(), any());
+    }
+
+    @Test
+    void getAlertById_facultyOwnEndpoint_succeeds() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(true);
+
+        AlertResponse result = alertService.getAlertById(alertId, callerId);
+
+        assertEquals(alertId, result.id());
+    }
+
+    @Test
+    void getAlertById_facultyAnotherFacultysAlert_deniedNeverReturnsData() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class, () -> alertService.getAlertById(alertId, callerId));
+    }
+
+    @Test
+    void getAlertById_facultyAlertWithNoEndpoint_deniedFailClosed() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, null);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class, () -> alertService.getAlertById(alertId, callerId));
+        verify(facultyScopeService, never()).canAccessEndpoint(any(), any());
+    }
+
+    // --- POST /alerts/{id}/acknowledge -------------------------------------
+
+    @Test
+    void acknowledgeAlert_facultyOwnEndpoint_succeeds() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        User user = new User();
+        user.setId(userId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(userId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(userId, endpointId)).thenReturn(true);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AlertResponse result = alertService.acknowledgeAlert(alertId, userId);
+
+        assertEquals("ACKNOWLEDGED", result.status());
+    }
+
+    @Test
+    void acknowledgeAlert_facultyAnotherFacultysAlert_deniedAndNeverMutated() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(userId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(userId, endpointId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class, () -> alertService.acknowledgeAlert(alertId, userId));
+
+        verify(alertRepository, never()).save(any(Alert.class));
+        verifyNoInteractions(userRepository, alertPublisher);
+    }
+
+    // --- POST /alerts/{id}/resolve ------------------------------------------
+
+    @Test
+    void resolveAlert_facultyOwnEndpoint_succeeds() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(true);
+        when(alertRepository.save(any(Alert.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AlertResponse result = alertService.resolveAlert(alertId, callerId);
+
+        assertEquals("RESOLVED", result.status());
+    }
+
+    @Test
+    void resolveAlert_facultyAnotherFacultysAlert_deniedAndNeverMutated() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = alertWithEndpoint(alertId, endpointId);
+        when(alertRepository.findById(alertId)).thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId)).thenReturn(false);
+        when(facultyScopeService.canAccessEndpoint(callerId, endpointId)).thenReturn(false);
+
+        assertThrows(AccessDeniedException.class, () -> alertService.resolveAlert(alertId, callerId));
+
+        verify(alertRepository, never()).save(any(Alert.class));
+        verifyNoInteractions(alertPublisher);
     }
 
 }

@@ -10,12 +10,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Handles both ingestion (POST /monitoring/**, from agent.py - see the
@@ -47,6 +51,7 @@ public class MonitoringService {
     private final InternetUsageEventRepository internetUsageEventRepository;
     private final UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     private final DetectionEvaluationExecutor detectionEvaluationExecutor;
+    private final FacultyScopeService facultyScopeService;
 
     public MonitoringService(
         LoginEventRepository loginEventRepository,
@@ -58,7 +63,8 @@ public class MonitoringService {
         NetworkUsageEventRepository networkUsageEventRepository,
         InternetUsageEventRepository internetUsageEventRepository,
         UsbEventPersistenceExecutor usbEventPersistenceExecutor,
-        DetectionEvaluationExecutor detectionEvaluationExecutor
+        DetectionEvaluationExecutor detectionEvaluationExecutor,
+        FacultyScopeService facultyScopeService
     ) {
         this.loginEventRepository = loginEventRepository;
         this.logoutEventRepository = logoutEventRepository;
@@ -70,6 +76,7 @@ public class MonitoringService {
         this.internetUsageEventRepository = internetUsageEventRepository;
         this.usbEventPersistenceExecutor = usbEventPersistenceExecutor;
         this.detectionEvaluationExecutor = detectionEvaluationExecutor;
+        this.facultyScopeService = facultyScopeService;
     }
 
     // -----------------------------------------------------------------
@@ -225,15 +232,57 @@ public class MonitoringService {
     }
 
     // -----------------------------------------------------------------
-    // Reads (Phase 4B) - each: unfiltered page when endpointId is null,
-    // filtered to one endpoint's rows otherwise. Newest first always.
+    // Reads (Phase 4B) - each takes the authenticated callerId (resolved
+    // by the controller from the JWT principal) in addition to the
+    // existing endpointId/Pageable params. Admin keeps exactly the
+    // previous unscoped behavior. A Faculty caller:
+    //  - with an explicit endpointId must be authorized for that endpoint
+    //    (FacultyScopeService.canAccessEndpoint) or is denied outright -
+    //    changing endpointId can never widen access, only be rejected.
+    //  - with no endpointId gets a lab-scoped query (see each
+    //    repository's findByEndpoint_Lab_IdInOrderBy...), never the
+    //    fleet-wide query used for Admin - omitting endpointId can never
+    //    leak the global fleet.
+    // Newest first always, in every scope.
     // -----------------------------------------------------------------
 
+    /**
+     * Shared scope-resolution for every list* method below: decides, from
+     * the caller's already-resolved {@link FacultyScopeService} scope,
+     * which of three already-scoped repository queries to run. Never
+     * fetches an unscoped page and filters it in Java.
+     *
+     * @throws AccessDeniedException if a non-global caller supplies an
+     *         endpointId they are not authorized for.
+     */
+    private <T> Page<T> resolveScopedPage(
+        UUID endpointId,
+        UUID callerId,
+        Pageable pageable,
+        Supplier<Page<T>> findAll,
+        Function<UUID, Page<T>> findByEndpoint,
+        Function<Set<UUID>, Page<T>> findByLabIds
+    ) {
+        boolean global = facultyScopeService.isGlobalScope(callerId);
+        if (endpointId != null) {
+            if (!global && !facultyScopeService.canAccessEndpoint(callerId, endpointId)) {
+                throw new AccessDeniedException("Not authorized for endpoint: " + endpointId);
+            }
+            return findByEndpoint.apply(endpointId);
+        }
+        if (global) {
+            return findAll.get();
+        }
+        Set<UUID> labIds = facultyScopeService.accessibleLaboratoryIds(callerId);
+        return labIds.isEmpty() ? Page.empty(pageable) : findByLabIds.apply(labIds);
+    }
+
     @Transactional(readOnly = true)
-    public PageResponse<LoginEventResponse> listLoginEvents(UUID endpointId, Pageable pageable) {
-        Page<LoginEvent> page = endpointId == null
-            ? loginEventRepository.findAllByOrderByLoginTimeDesc(pageable)
-            : loginEventRepository.findByEndpoint_IdOrderByLoginTimeDesc(endpointId, pageable);
+    public PageResponse<LoginEventResponse> listLoginEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<LoginEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> loginEventRepository.findAllByOrderByLoginTimeDesc(pageable),
+            id -> loginEventRepository.findByEndpoint_IdOrderByLoginTimeDesc(id, pageable),
+            labIds -> loginEventRepository.findByEndpoint_Lab_IdInOrderByLoginTimeDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new LoginEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getOsUsername(), e.getSessionId(), e.getLoginTime(), e.getReceivedAt()
@@ -241,10 +290,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<LogoutEventResponse> listLogoutEvents(UUID endpointId, Pageable pageable) {
-        Page<LogoutEvent> page = endpointId == null
-            ? logoutEventRepository.findAllByOrderByLogoutTimeDesc(pageable)
-            : logoutEventRepository.findByEndpoint_IdOrderByLogoutTimeDesc(endpointId, pageable);
+    public PageResponse<LogoutEventResponse> listLogoutEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<LogoutEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> logoutEventRepository.findAllByOrderByLogoutTimeDesc(pageable),
+            id -> logoutEventRepository.findByEndpoint_IdOrderByLogoutTimeDesc(id, pageable),
+            labIds -> logoutEventRepository.findByEndpoint_Lab_IdInOrderByLogoutTimeDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new LogoutEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getOsUsername(), e.getSessionId(), e.getLogoutTime(), e.getReceivedAt()
@@ -252,10 +302,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<UsbEventResponse> listUsbEvents(UUID endpointId, Pageable pageable) {
-        Page<UsbEvent> page = endpointId == null
-            ? usbEventRepository.findAllByOrderByEventTimeDesc(pageable)
-            : usbEventRepository.findByEndpoint_IdOrderByEventTimeDesc(endpointId, pageable);
+    public PageResponse<UsbEventResponse> listUsbEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<UsbEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> usbEventRepository.findAllByOrderByEventTimeDesc(pageable),
+            id -> usbEventRepository.findByEndpoint_IdOrderByEventTimeDesc(id, pageable),
+            labIds -> usbEventRepository.findByEndpoint_Lab_IdInOrderByEventTimeDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new UsbEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getDeviceName(), e.getDeviceId(), e.getVendorId(), e.getProductId(),
@@ -265,10 +316,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<VpnEventResponse> listVpnEvents(UUID endpointId, Pageable pageable) {
-        Page<VpnEvent> page = endpointId == null
-            ? vpnEventRepository.findAllByOrderByDetectedAtDesc(pageable)
-            : vpnEventRepository.findByEndpoint_IdOrderByDetectedAtDesc(endpointId, pageable);
+    public PageResponse<VpnEventResponse> listVpnEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<VpnEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> vpnEventRepository.findAllByOrderByDetectedAtDesc(pageable),
+            id -> vpnEventRepository.findByEndpoint_IdOrderByDetectedAtDesc(id, pageable),
+            labIds -> vpnEventRepository.findByEndpoint_Lab_IdInOrderByDetectedAtDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new VpnEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getAdapterName(), e.isActive(), e.getDetectedAt()
@@ -276,10 +328,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<IdleEventResponse> listIdleEvents(UUID endpointId, Pageable pageable) {
-        Page<IdleEvent> page = endpointId == null
-            ? idleEventRepository.findAllByOrderByRecordedAtDesc(pageable)
-            : idleEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(endpointId, pageable);
+    public PageResponse<IdleEventResponse> listIdleEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<IdleEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> idleEventRepository.findAllByOrderByRecordedAtDesc(pageable),
+            id -> idleEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(id, pageable),
+            labIds -> idleEventRepository.findByEndpoint_Lab_IdInOrderByRecordedAtDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new IdleEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getIdleSeconds(), e.getRecordedAt()
@@ -287,10 +340,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<NetworkUsageEventResponse> listNetworkUsageEvents(UUID endpointId, Pageable pageable) {
-        Page<NetworkUsageEvent> page = endpointId == null
-            ? networkUsageEventRepository.findAllByOrderByRecordedAtDesc(pageable)
-            : networkUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(endpointId, pageable);
+    public PageResponse<NetworkUsageEventResponse> listNetworkUsageEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<NetworkUsageEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> networkUsageEventRepository.findAllByOrderByRecordedAtDesc(pageable),
+            id -> networkUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(id, pageable),
+            labIds -> networkUsageEventRepository.findByEndpoint_Lab_IdInOrderByRecordedAtDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new NetworkUsageEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getBytesSent(), e.getBytesReceived(), e.getInterfaceName(), e.getSampledAt(), e.getRecordedAt()
@@ -298,10 +352,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<InternetUsageEventResponse> listInternetUsageEvents(UUID endpointId, Pageable pageable) {
-        Page<InternetUsageEvent> page = endpointId == null
-            ? internetUsageEventRepository.findAllByOrderByRecordedAtDesc(pageable)
-            : internetUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(endpointId, pageable);
+    public PageResponse<InternetUsageEventResponse> listInternetUsageEvents(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<InternetUsageEvent> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> internetUsageEventRepository.findAllByOrderByRecordedAtDesc(pageable),
+            id -> internetUsageEventRepository.findByEndpoint_IdOrderByRecordedAtDesc(id, pageable),
+            labIds -> internetUsageEventRepository.findByEndpoint_Lab_IdInOrderByRecordedAtDesc(labIds, pageable));
         return PageResponse.of(page.map(e -> new InternetUsageEventResponse(
             e.getId(), e.getEndpoint().getId(), e.getEndpoint().getHostname(),
             e.getUploadMb(), e.getDownloadMb(), e.getPeriodSeconds(), e.getSampledAt(), e.getRecordedAt()
@@ -309,10 +364,11 @@ public class MonitoringService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<RunningAppSnapshotResponse> listRunningAppSnapshots(UUID endpointId, Pageable pageable) {
-        Page<RunningAppSnapshot> page = endpointId == null
-            ? runningAppSnapshotRepository.findAllByOrderByCapturedAtDesc(pageable)
-            : runningAppSnapshotRepository.findByEndpoint_IdOrderByCapturedAtDesc(endpointId, pageable);
+    public PageResponse<RunningAppSnapshotResponse> listRunningAppSnapshots(UUID endpointId, Pageable pageable, UUID callerId) {
+        Page<RunningAppSnapshot> page = resolveScopedPage(endpointId, callerId, pageable,
+            () -> runningAppSnapshotRepository.findAllByOrderByCapturedAtDesc(pageable),
+            id -> runningAppSnapshotRepository.findByEndpoint_IdOrderByCapturedAtDesc(id, pageable),
+            labIds -> runningAppSnapshotRepository.findByEndpoint_Lab_IdInOrderByCapturedAtDesc(labIds, pageable));
         return PageResponse.of(page.map(s -> new RunningAppSnapshotResponse(
             s.getId(), s.getEndpoint().getId(), s.getEndpoint().getHostname(), s.getCapturedAt(),
             s.getApps().stream()
