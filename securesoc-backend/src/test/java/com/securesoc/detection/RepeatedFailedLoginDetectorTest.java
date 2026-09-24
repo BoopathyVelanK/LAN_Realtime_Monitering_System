@@ -5,6 +5,7 @@ import com.securesoc.repository.AuthFailureEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -14,7 +15,9 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -184,5 +187,48 @@ class RepeatedFailedLoginDetectorTest {
         DetectionResult result = detector.evaluate(contextWith(userId, occurredAt), rule);
 
         assertFalse(result.detected());
+    }
+    @Test
+    void evaluate_passesOccurredAtMinusWindowSecondsAsSinceBoundary() {
+        Instant fixedOccurredAt = Instant.parse("2026-01-01T12:00:00Z");
+        Instant expectedSince = Instant.parse("2026-01-01T11:55:00Z");
+        DetectionRule rule = supportedRule(5, 300);
+        when(authFailureEventRepository.countByUser_IdAndAttemptedAtAfter(userId, expectedSince))
+            .thenReturn(5L);
+
+        DetectionResult result = detector.evaluate(contextWith(userId, fixedOccurredAt), rule);
+
+        ArgumentCaptor<UUID> userCaptor = ArgumentCaptor.forClass(UUID.class);
+        ArgumentCaptor<Instant> sinceCaptor = ArgumentCaptor.forClass(Instant.class);
+
+        verify(authFailureEventRepository)
+            .countByUser_IdAndAttemptedAtAfter(userCaptor.capture(), sinceCaptor.capture());
+        verifyNoMoreInteractions(authFailureEventRepository);
+
+        assertEquals(userId, userCaptor.getValue());
+        assertEquals(expectedSince, sinceCaptor.getValue());
+        assertTrue(result.detected());
+    }
+
+    @Test
+    void evaluate_differentWindowSeconds_producesDifferentSinceBoundary() {
+        Instant fixedOccurredAt = Instant.parse("2026-01-01T12:00:00Z");
+        Instant sinceFor300 = Instant.parse("2026-01-01T11:55:00Z");
+        Instant sinceFor900 = Instant.parse("2026-01-01T11:45:00Z");
+
+        when(authFailureEventRepository.countByUser_IdAndAttemptedAtAfter(userId, sinceFor300))
+            .thenReturn(1L);
+        when(authFailureEventRepository.countByUser_IdAndAttemptedAtAfter(userId, sinceFor900))
+            .thenReturn(1L);
+
+        detector.evaluate(contextWith(userId, fixedOccurredAt), supportedRule(5, 300));
+        detector.evaluate(contextWith(userId, fixedOccurredAt), supportedRule(5, 900));
+
+        assertNotEquals(sinceFor300, sinceFor900);
+        verify(authFailureEventRepository)
+            .countByUser_IdAndAttemptedAtAfter(userId, sinceFor300);
+        verify(authFailureEventRepository)
+            .countByUser_IdAndAttemptedAtAfter(userId, sinceFor900);
+        verifyNoMoreInteractions(authFailureEventRepository);
     }
 }
