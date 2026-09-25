@@ -49,6 +49,53 @@ class UsbEventDetectorTest {
     }
 
     @Test
+    void testNullContext() {
+        DetectionResult result = detector.evaluate(null, rule);
+        assertThat(result.detected()).isFalse();
+        verifyNoInteractions(usbEventRepository);
+    }
+
+    @Test
+    void testNullThreshold() {
+        rule.setThreshold(null);
+        DetectionContext context = new DetectionContext("USB", endpointId, null, occurredAt, null);
+
+        DetectionResult result = detector.evaluate(context, rule);
+        assertThat(result.detected()).isFalse();
+        verifyNoInteractions(usbEventRepository);
+    }
+
+    @Test
+    void testNonPositiveThreshold() {
+        rule.setThreshold(0);
+        DetectionContext context = new DetectionContext("USB", endpointId, null, occurredAt, null);
+
+        DetectionResult result = detector.evaluate(context, rule);
+        assertThat(result.detected()).isFalse();
+        verifyNoInteractions(usbEventRepository);
+    }
+
+    @Test
+    void testNullWindowSeconds() {
+        rule.setWindowSeconds(null);
+        DetectionContext context = new DetectionContext("USB", endpointId, null, occurredAt, null);
+
+        DetectionResult result = detector.evaluate(context, rule);
+        assertThat(result.detected()).isFalse();
+        verifyNoInteractions(usbEventRepository);
+    }
+
+    @Test
+    void testNonPositiveWindowSeconds() {
+        rule.setWindowSeconds(0);
+        DetectionContext context = new DetectionContext("USB", endpointId, null, occurredAt, null);
+
+        DetectionResult result = detector.evaluate(context, rule);
+        assertThat(result.detected()).isFalse();
+        verifyNoInteractions(usbEventRepository);
+    }
+
+    @Test
     void testMissingEndpointId() {
         DetectionContext context = new DetectionContext("USB", null, null, occurredAt, null);
         DetectionResult result = detector.evaluate(context, rule);
