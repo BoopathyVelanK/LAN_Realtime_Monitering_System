@@ -15,8 +15,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.security.access.AccessDeniedException;
@@ -33,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -466,6 +469,64 @@ class AlertServiceTest {
         verify(alertRepository).findByUser_IdAndRule_IdAndStatus(userId, ruleIdB, Alert.Status.OPEN);
         verify(alertInsertExecutor, times(2)).insertAlert(any(Alert.class));
         assertNotEquals(ruleIdA, ruleIdB);
+    }
+
+    @Test
+    void createAlertFrom_insertRaceLoss_reusesWinnersAlertWithoutPublishing() {
+        User user = new User();
+        user.setId(userId);
+
+        DetectionRule rule = rule();
+        DetectionResult result = detectedResult(userId, null);
+
+        Alert winner = alertWithEndpoint(UUID.randomUUID(), null);
+
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty(), Optional.of(winner));
+
+        DataIntegrityViolationException original =
+            new DataIntegrityViolationException("duplicate open alert");
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenThrow(original);
+
+        InOrder order = inOrder(alertRepository, alertInsertExecutor);
+
+        Optional<Alert> actual = alertService.createAlertFrom(result);
+
+        assertTrue(actual.isPresent());
+        assertSame(winner, actual.get());
+        order.verify(alertRepository).findByUser_IdAndRule_IdAndStatus(
+            userId, ruleId, Alert.Status.OPEN);
+        order.verify(alertInsertExecutor).insertAlert(any(Alert.class));
+        order.verify(alertRepository).findByUser_IdAndRule_IdAndStatus(
+            userId, ruleId, Alert.Status.OPEN);
+        verifyNoInteractions(alertPublisher);
+    }
+
+    @Test
+    void createAlertFrom_insertRaceLossWithNoWinner_rethrowsOriginalException() {
+        User user = new User();
+        user.setId(userId);
+
+        DetectionRule rule = rule();
+        DetectionResult result = detectedResult(userId, null);
+
+        DataIntegrityViolationException original =
+            new DataIntegrityViolationException("duplicate open alert");
+
+        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN))
+            .thenReturn(Optional.empty());
+        when(alertInsertExecutor.insertAlert(any(Alert.class))).thenThrow(original);
+
+        DataIntegrityViolationException thrown = assertThrows(
+            DataIntegrityViolationException.class,
+            () -> alertService.createAlertFrom(result));
+
+        assertSame(original, thrown);
+        verifyNoInteractions(alertPublisher);
     }
 
     // =====================================================================
