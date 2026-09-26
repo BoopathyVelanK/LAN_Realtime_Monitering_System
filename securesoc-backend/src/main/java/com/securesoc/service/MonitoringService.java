@@ -50,6 +50,7 @@ public class MonitoringService {
     private final NetworkUsageEventRepository networkUsageEventRepository;
     private final InternetUsageEventRepository internetUsageEventRepository;
     private final UsbEventPersistenceExecutor usbEventPersistenceExecutor;
+    private final VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
     private final DetectionEvaluationExecutor detectionEvaluationExecutor;
     private final FacultyScopeService facultyScopeService;
 
@@ -63,6 +64,7 @@ public class MonitoringService {
         NetworkUsageEventRepository networkUsageEventRepository,
         InternetUsageEventRepository internetUsageEventRepository,
         UsbEventPersistenceExecutor usbEventPersistenceExecutor,
+        VpnEventPersistenceExecutor vpnEventPersistenceExecutor,
         DetectionEvaluationExecutor detectionEvaluationExecutor,
         FacultyScopeService facultyScopeService
     ) {
@@ -75,6 +77,7 @@ public class MonitoringService {
         this.networkUsageEventRepository = networkUsageEventRepository;
         this.internetUsageEventRepository = internetUsageEventRepository;
         this.usbEventPersistenceExecutor = usbEventPersistenceExecutor;
+        this.vpnEventPersistenceExecutor = vpnEventPersistenceExecutor;
         this.detectionEvaluationExecutor = detectionEvaluationExecutor;
         this.facultyScopeService = facultyScopeService;
     }
@@ -182,13 +185,49 @@ public class MonitoringService {
         return MonitoringIngestResponse.ok("USB event recorded.");
     }
 
-    @Transactional
+    // Deliberately NOT @Transactional at this level - see
+    // VpnEventPersistenceExecutor's javadoc. Persistence and detection
+    // must run as two independent, sequential, separately-committed
+    // transactions, not as one shared transaction wrapping both: a
+    // detector relying on a database-backed count (VpnEventDetector's
+    // threshold query) must be able to see the very row that triggered
+    // it, which requires that row to already be committed - not just
+    // flushed - before detection's own transaction begins.
     public MonitoringIngestResponse recordVpn(EndpointDevice device, VpnEventRequest request) {
         VpnEvent event = new VpnEvent();
         event.setEndpoint(device);
         event.setAdapterName(request.adapterName());
         event.setActive(request.active());
-        vpnEventRepository.save(event);
+
+        // Persisted and COMMITTED independently, in its own transaction,
+        // strictly before detection runs - see VpnEventPersistenceExecutor's
+        // javadoc for why detection otherwise cannot see the very event it
+        // is meant to evaluate under PostgreSQL READ COMMITTED isolation.
+        VpnEvent persisted = vpnEventPersistenceExecutor.persist(event);
+
+        DetectionContext context = new DetectionContext(
+            "VPN_EVENT",
+            device.getId(),
+            null,
+            persisted.getDetectedAt(),
+            null
+        );
+
+        // Detection/alert/risk processing runs in its own isolated
+        // (REQUIRES_NEW) transaction - see DetectionEvaluationExecutor's
+        // javadoc for why a plain call into DetectionEngine here would
+        // not be safe. Any failure there must never cost us the VPN
+        // telemetry event already committed above; this mirrors how
+        // MonitoringService.recordUsb() isolates its own DetectionEngine
+        // call from its own critical response.
+        try {
+            detectionEvaluationExecutor.evaluate(context);
+        } catch (RuntimeException detectionFailure) {
+            log.error("Detection engine failed while evaluating a VPN_EVENT for endpoint {}. "
+                + "The VPN telemetry event was already persisted and is unaffected.",
+                device.getId(), detectionFailure);
+        }
+
         return MonitoringIngestResponse.ok("VPN status recorded.");
     }
 

@@ -18,4 +18,10 @@ public interface VpnEventRepository extends JpaRepository<VpnEvent, UUID> {
      * endpointId filter - scoped to the caller's authorized labs (see
      * FacultyScopeService), never an unscoped page filtered in Java. */
     Page<VpnEvent> findByEndpoint_Lab_IdInOrderByDetectedAtDesc(Collection<UUID> labIds, Pageable pageable);
+
+    /** Backs VpnEventDetector's threshold query - counts only active VPN
+     * events (an active=false row is the collector's "no VPN found"
+     * heartbeat, never a violation signal) for one endpoint since a given
+     * instant. */
+    long countByEndpoint_IdAndActiveTrueAndDetectedAtAfter(UUID endpointId, java.time.Instant since);
 }
