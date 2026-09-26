@@ -60,6 +60,7 @@ class MonitoringServiceTest {
     @Mock private NetworkUsageEventRepository networkUsageEventRepository;
     @Mock private InternetUsageEventRepository internetUsageEventRepository;
     @Mock private UsbEventPersistenceExecutor usbEventPersistenceExecutor;
+    @Mock private VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
     @Mock private DetectionEvaluationExecutor detectionEvaluationExecutor;
     @Mock private FacultyScopeService facultyScopeService;
 
@@ -81,6 +82,7 @@ class MonitoringServiceTest {
             networkUsageEventRepository,
             internetUsageEventRepository,
             usbEventPersistenceExecutor,
+            vpnEventPersistenceExecutor,
             detectionEvaluationExecutor,
             facultyScopeService
         );
@@ -88,6 +90,7 @@ class MonitoringServiceTest {
         endpointId = UUID.randomUUID();
         pageable = PageRequest.of(0, 20);
     }
+
 
     private EndpointDevice endpointWithHostname(UUID id) {
         EndpointDevice device = new EndpointDevice();
