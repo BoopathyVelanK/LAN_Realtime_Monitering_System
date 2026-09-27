@@ -11,6 +11,7 @@ import com.securesoc.dto.monitoring.MonitoringIngestResponse;
 import com.securesoc.dto.monitoring.NetworkUsageEventRequest;
 import com.securesoc.dto.monitoring.NetworkUsageEventResponse;
 import com.securesoc.dto.monitoring.RunningAppSnapshotResponse;
+import com.securesoc.dto.monitoring.RunningAppsRequest;
 import com.securesoc.dto.monitoring.UsbEventRequest;
 import com.securesoc.dto.monitoring.UsbEventResponse;
 import com.securesoc.dto.monitoring.VpnEventResponse;
@@ -61,6 +62,7 @@ class MonitoringServiceTest {
     @Mock private InternetUsageEventRepository internetUsageEventRepository;
     @Mock private UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     @Mock private VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
+    @Mock private RunningAppPersistenceExecutor runningAppPersistenceExecutor;
     @Mock private DetectionEvaluationExecutor detectionEvaluationExecutor;
     @Mock private FacultyScopeService facultyScopeService;
 
@@ -83,6 +85,7 @@ class MonitoringServiceTest {
             internetUsageEventRepository,
             usbEventPersistenceExecutor,
             vpnEventPersistenceExecutor,
+            runningAppPersistenceExecutor,
             detectionEvaluationExecutor,
             facultyScopeService
         );
@@ -97,6 +100,102 @@ class MonitoringServiceTest {
         device.setId(id);
         device.setHostname("test-host");
         return device;
+    }
+
+    // -----------------------------------------------------------------
+    // recordRunningApps persistence + detection wiring (F6 - Suspicious
+    // Process Detection). Mirrors the recordUsb block immediately below
+    // exactly, since recordRunningApps now follows the same
+    // persist-then-detect, failure-isolated pattern.
+    // -----------------------------------------------------------------
+
+    @Test
+    void recordRunningApps_persistsSnapshotAndCallsDetectionEvaluationExecutor_withCorrectContext() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+        device.setHostname("test-host");
+
+        RunningAppsRequest request = new RunningAppsRequest(List.of(
+            new RunningAppsRequest.AppEntry("powershell.exe", null, 1234),
+            new RunningAppsRequest.AppEntry("explorer.exe", null, 5678)
+        ));
+
+        when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        MonitoringIngestResponse response = monitoringService.recordRunningApps(device, request);
+
+        assertEquals("Recorded 2 running application(s).", response.message());
+
+        ArgumentCaptor<RunningAppSnapshot> snapshotCaptor = ArgumentCaptor.forClass(RunningAppSnapshot.class);
+        verify(runningAppPersistenceExecutor).persist(snapshotCaptor.capture());
+
+        RunningAppSnapshot persistedSnapshot = snapshotCaptor.getValue();
+        assertEquals(device, persistedSnapshot.getEndpoint());
+        assertEquals(2, persistedSnapshot.getApps().size());
+        assertEquals("powershell.exe", persistedSnapshot.getApps().get(0).getProcessName());
+        assertEquals(1234, persistedSnapshot.getApps().get(0).getPid());
+        assertEquals("explorer.exe", persistedSnapshot.getApps().get(1).getProcessName());
+        assertNotNull(persistedSnapshot.getCapturedAt());
+
+        ArgumentCaptor<DetectionContext> contextCaptor = ArgumentCaptor.forClass(DetectionContext.class);
+        verify(detectionEvaluationExecutor).evaluate(contextCaptor.capture());
+
+        DetectionContext context = contextCaptor.getValue();
+        assertEquals("RUNNING_APP", context.eventSource());
+        assertEquals(device.getId(), context.endpointId());
+        assertNull(context.userId());
+        assertEquals(persistedSnapshot.getCapturedAt(), context.occurredAt());
+        assertNull(context.event(), "event must be null - RunningAppSnapshot does not implement DetectionEvent");
+    }
+
+    @Test
+    void recordRunningApps_detectionSucceeds_returnsNormalSuccessResponse() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        RunningAppsRequest request = new RunningAppsRequest(List.of(
+            new RunningAppsRequest.AppEntry("chrome.exe", null, 42)
+        ));
+
+        when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        MonitoringIngestResponse response = monitoringService.recordRunningApps(device, request);
+
+        assertEquals("Recorded 1 running application(s).", response.message());
+        verify(runningAppPersistenceExecutor).persist(any(RunningAppSnapshot.class));
+        verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
+    }
+
+    @Test
+    void recordRunningApps_detectionEvaluationExecutorThrows_stillReturnsSuccessResponse_andSnapshotWasAlreadyPersisted() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        RunningAppsRequest request = new RunningAppsRequest(List.of(
+            new RunningAppsRequest.AppEntry("powershell.exe", null, 99)
+        ));
+
+        when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(detectionEvaluationExecutor.evaluate(any(DetectionContext.class)))
+            .thenThrow(new RuntimeException("simulated detection failure"));
+
+        MonitoringIngestResponse response =
+            assertDoesNotThrow(() -> monitoringService.recordRunningApps(device, request));
+
+        assertEquals("Recorded 1 running application(s).", response.message());
+
+        // The snapshot was persisted (and, for real, committed - see
+        // RunningAppPersistenceExecutor) strictly BEFORE the detection
+        // call, so this verification proves the ordering and that no
+        // exception propagates past this method. A unit test can prove
+        // that ordering but not that the persistence transaction actually
+        // commits in isolation from detection; that is proven separately
+        // by an integration test against real PostgreSQL.
+        verify(runningAppPersistenceExecutor).persist(any(RunningAppSnapshot.class));
+        verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
     }
 
     @Test
