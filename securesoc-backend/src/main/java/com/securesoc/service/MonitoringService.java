@@ -51,6 +51,7 @@ public class MonitoringService {
     private final InternetUsageEventRepository internetUsageEventRepository;
     private final UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     private final VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
+    private final RunningAppPersistenceExecutor runningAppPersistenceExecutor;
     private final DetectionEvaluationExecutor detectionEvaluationExecutor;
     private final FacultyScopeService facultyScopeService;
 
@@ -65,6 +66,7 @@ public class MonitoringService {
         InternetUsageEventRepository internetUsageEventRepository,
         UsbEventPersistenceExecutor usbEventPersistenceExecutor,
         VpnEventPersistenceExecutor vpnEventPersistenceExecutor,
+        RunningAppPersistenceExecutor runningAppPersistenceExecutor,
         DetectionEvaluationExecutor detectionEvaluationExecutor,
         FacultyScopeService facultyScopeService
     ) {
@@ -78,6 +80,7 @@ public class MonitoringService {
         this.internetUsageEventRepository = internetUsageEventRepository;
         this.usbEventPersistenceExecutor = usbEventPersistenceExecutor;
         this.vpnEventPersistenceExecutor = vpnEventPersistenceExecutor;
+        this.runningAppPersistenceExecutor = runningAppPersistenceExecutor;
         this.detectionEvaluationExecutor = detectionEvaluationExecutor;
         this.facultyScopeService = facultyScopeService;
     }
@@ -108,7 +111,15 @@ public class MonitoringService {
         return MonitoringIngestResponse.ok("Logout event recorded.");
     }
 
-    @Transactional
+    // Deliberately NOT @Transactional at this level - see
+    // RunningAppPersistenceExecutor's javadoc. Persistence and detection
+    // must run as two independent, sequential, separately-committed
+    // transactions, not as one shared transaction wrapping both: a
+    // detector relying on a database-backed lookup
+    // (SuspiciousProcessDetector's process-name match) must be able to
+    // see the very rows that triggered it, which requires those rows to
+    // already be committed - not just flushed - before detection's own
+    // transaction begins.
     public MonitoringIngestResponse recordRunningApps(EndpointDevice device, RunningAppsRequest request) {
         RunningAppSnapshot snapshot = new RunningAppSnapshot();
         snapshot.setEndpoint(device);
@@ -123,7 +134,34 @@ public class MonitoringService {
             snapshot.getApps().add(app);
         }
 
-        runningAppSnapshotRepository.save(snapshot); // cascades to RunningApp rows
+        // Persisted and COMMITTED independently, in its own transaction,
+        // strictly before detection runs - see RunningAppPersistenceExecutor's
+        // javadoc for why detection otherwise cannot see the very rows it
+        // is meant to evaluate under PostgreSQL READ COMMITTED isolation.
+        RunningAppSnapshot persisted = runningAppPersistenceExecutor.persist(snapshot); // cascades to RunningApp rows
+
+        DetectionContext context = new DetectionContext(
+            "RUNNING_APP",
+            device.getId(),
+            null,
+            persisted.getCapturedAt(),
+            null
+        );
+
+        // Detection/alert/risk processing runs in its own isolated
+        // (REQUIRES_NEW) transaction - see DetectionEvaluationExecutor's
+        // javadoc for why a plain call into DetectionEngine here would
+        // not be safe. Any failure there must never cost us the
+        // running-app telemetry already committed above; this mirrors
+        // MonitoringService.recordUsb()/recordVpn().
+        try {
+            detectionEvaluationExecutor.evaluate(context);
+        } catch (RuntimeException detectionFailure) {
+            log.error("Detection engine failed while evaluating a RUNNING_APP snapshot for endpoint {}. "
+                + "The running-app telemetry was already persisted and is unaffected.",
+                device.getId(), detectionFailure);
+        }
+
         return MonitoringIngestResponse.ok("Recorded " + entries.size() + " running application(s).");
     }
 
