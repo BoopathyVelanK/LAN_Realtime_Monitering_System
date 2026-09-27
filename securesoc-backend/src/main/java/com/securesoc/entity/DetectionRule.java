@@ -17,7 +17,7 @@ import java.util.UUID;
 @NoArgsConstructor
 public class DetectionRule {
 
-    public enum RuleType { THRESHOLD }
+    public enum RuleType { THRESHOLD, PROCESS_MATCH }
 
     public enum Severity { LOW, MEDIUM, HIGH, CRITICAL }
 
@@ -46,6 +46,13 @@ public class DetectionRule {
 
     @Column(name = "window_seconds")
     private Integer windowSeconds;
+
+    /** Exact, case-insensitive process name a PROCESS_MATCH rule watches
+     * for (e.g. "powershell.exe") - see SuspiciousProcessDetector. Null
+     * for every other rule type, same as threshold/windowSeconds being
+     * null for non-THRESHOLD rules. */
+    @Column(name = "process_name", length = 255)
+    private String processName;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
