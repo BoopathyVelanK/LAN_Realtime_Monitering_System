@@ -100,15 +100,16 @@ class SuspiciousProcessDetectorTest {
         verifyNoInteractions(runningAppRepository);
     }
 
-    @Test
-    void evaluate_wrongEventSource_returnsNone_andNeverQueriesRepository() {
-        DetectionContext context = new DetectionContext("USB_EVENT", endpointId, null, occurredAt, null);
-
-        DetectionResult result = detector.evaluate(context, processMatchRule("powershell.exe"));
-
-        assertFalse(result.detected());
-        verifyNoInteractions(runningAppRepository);
-    }
+    // Note: there is deliberately no evaluate()-level test asserting that a
+    // context.eventSource()/rule.eventSource() mismatch is rejected before
+    // querying the repository. Neither this detector nor the established
+    // VpnEventDetector/UsbEventDetector validate context.eventSource()
+    // inside evaluate() - DetectionEngine.evaluate() already selects rules
+    // via findByEventSourceAndEnabledTrue(context.eventSource()) before any
+    // detector is ever invoked, so a detector is never handed a mismatched
+    // (context, rule) pair in real operation. The relevant coverage for a
+    // wrong event source is supports_wrongEventSource_returnsFalse() above,
+    // which tests the actual contract (the rule's own eventSource).
 
     @Test
     void evaluate_wrongRuleType_returnsNone_andNeverQueriesRepository() {

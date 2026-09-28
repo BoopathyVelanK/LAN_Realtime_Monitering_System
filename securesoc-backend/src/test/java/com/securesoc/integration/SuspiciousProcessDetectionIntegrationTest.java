@@ -29,6 +29,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,6 +57,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * what needs proving against a real database - not just the transaction
  * boundary (which UsbDetectionFailureIsolationIntegrationTest already
  * covers generically for the persistence-executor pattern).
+ *
+ * Lazy-loading note: every assertion and every cleanup step below reads
+ * entities through repository calls whose own (short, auto-commit)
+ * transaction has already closed by the time the test code inspects the
+ * result. This class deliberately never dereferences a LAZY association's
+ * non-identifier fields on such a detached entity (e.g. never calls
+ * RunningAppSnapshot.getApps() or RunningApp.getSnapshot().getEndpoint()
+ * outside of an active session) - only identifier (getId()) access on a
+ * lazy proxy, which Hibernate resolves from the proxy itself without
+ * requiring a session, and separate repository queries, are used instead.
  */
 @Testcontainers
 @SpringBootTest
@@ -90,7 +101,7 @@ class SuspiciousProcessDetectionIntegrationTest {
     @Autowired
     private AlertRepository alertRepository;
 
-    private static final String AGENT_TOKEN = "test-suspicious-process-token-123";
+    private static final String AGENT_TOKEN_PREFIX = "test-suspicious-process-token-";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
@@ -98,7 +109,8 @@ class SuspiciousProcessDetectionIntegrationTest {
 
     @Test
     void matchingProcess_isPersisted_detectedAcrossTheRealTransactionBoundary_andProducesAnAlert() throws Exception {
-        EndpointDevice endpoint = persistEndpoint();
+        String agentToken = uniqueAgentToken();
+        EndpointDevice endpoint = persistEndpoint(agentToken);
         DetectionRule rule = persistRule("powershell.exe");
 
         String payload = """
@@ -112,27 +124,38 @@ class SuspiciousProcessDetectionIntegrationTest {
 
         mockMvc.perform(post("/monitoring/running-apps")
                 .servletPath("/monitoring/running-apps")
-                .header("X-Agent-Token", AGENT_TOKEN)
+                .header("X-Agent-Token", agentToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk());
 
-        // Decisive assertion #1: both the snapshot and its RunningApp rows
-        // were actually committed - a fresh read against the real
-        // database, not the same persistence context that performed the
-        // write.
+        // Decisive assertion #1: both RunningApp rows were actually
+        // persisted and committed - verified via a fresh repository read
+        // (runningAppRepository.findAll(), a plain inherited JpaRepository
+        // method, not a newly declared one) rather than by dereferencing
+        // RunningAppSnapshot.apps (a LAZY @OneToMany) on an entity returned
+        // from a closed session, which would throw
+        // LazyInitializationException. Only RunningApp.getSnapshot().getId()
+        // is touched below - identifier access on a lazy proxy, which
+        // Hibernate resolves without needing an active session.
         List<RunningAppSnapshot> snapshots = runningAppSnapshotRepository
             .findByEndpoint_IdOrderByCapturedAtDesc(endpoint.getId(), Pageable.unpaged())
             .getContent();
         assertEquals(1, snapshots.size(), "The running-app snapshot must survive ingestion.");
-        assertEquals(2, snapshots.get(0).getApps().size());
+        UUID snapshotId = snapshots.get(0).getId();
+
+        long persistedAppCount = runningAppRepository.findAll().stream()
+            .filter(a -> a.getSnapshot() != null && snapshotId.equals(a.getSnapshot().getId()))
+            .count();
+        assertEquals(2, persistedAppCount, "Both RunningApp rows must have been persisted and committed.");
 
         // Decisive assertion #2: SuspiciousProcessDetector, evaluated in
         // DetectionEvaluationExecutor's own REQUIRES_NEW transaction,
         // could see the just-committed RunningApp rows (proving the
         // RunningAppPersistenceExecutor ordering) and produced a real
         // Alert row via the same AlertService path every other detector
-        // uses - no mocking of DetectionEngine in this test.
+        // uses - no mocking of DetectionEngine, SuspiciousProcessDetector,
+        // AlertService, or RiskScoreService in this test.
         List<Alert> alerts = alertRepository.findAll().stream()
             .filter(a -> a.getRule() != null && rule.getId().equals(a.getRule().getId()))
             .toList();
@@ -142,7 +165,8 @@ class SuspiciousProcessDetectionIntegrationTest {
 
     @Test
     void similarButNotExactProcessName_doesNotMatch_noAlertProduced() throws Exception {
-        persistEndpoint();
+        String agentToken = uniqueAgentToken();
+        persistEndpoint(agentToken);
         DetectionRule rule = persistRule("powershell.exe");
 
         String payload = """
@@ -156,7 +180,7 @@ class SuspiciousProcessDetectionIntegrationTest {
 
         mockMvc.perform(post("/monitoring/running-apps")
                 .servletPath("/monitoring/running-apps")
-                .header("X-Agent-Token", AGENT_TOKEN)
+                .header("X-Agent-Token", agentToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk());
@@ -164,12 +188,13 @@ class SuspiciousProcessDetectionIntegrationTest {
         List<Alert> alerts = alertRepository.findAll().stream()
             .filter(a -> a.getRule() != null && rule.getId().equals(a.getRule().getId()))
             .toList();
-        assertTrue(alerts.isEmpty(), "A near-miss process name must not match an exact PROCESS_MATCH rule.");
+        assertTrue(alerts.isEmpty(), "A near-miss process name (powershell_ise.exe) must not match an exact PROCESS_MATCH rule for powershell.exe.");
     }
 
     @Test
     void caseInsensitiveMatch_stillDetects() throws Exception {
-        persistEndpoint();
+        String agentToken = uniqueAgentToken();
+        persistEndpoint(agentToken);
         DetectionRule rule = persistRule("powershell.exe");
 
         String payload = """
@@ -182,7 +207,7 @@ class SuspiciousProcessDetectionIntegrationTest {
 
         mockMvc.perform(post("/monitoring/running-apps")
                 .servletPath("/monitoring/running-apps")
-                .header("X-Agent-Token", AGENT_TOKEN)
+                .header("X-Agent-Token", agentToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(payload))
             .andExpect(status().isOk());
@@ -190,23 +215,40 @@ class SuspiciousProcessDetectionIntegrationTest {
         List<Alert> alerts = alertRepository.findAll().stream()
             .filter(a -> a.getRule() != null && rule.getId().equals(a.getRule().getId()))
             .toList();
-        assertEquals(1, alerts.size(), "PROCESS_MATCH must be case-insensitive.");
+        assertEquals(1, alerts.size(), "PROCESS_MATCH must be case-insensitive: POWERSHELL.EXE must match a rule for powershell.exe.");
     }
 
     @AfterEach
     void cleanUpCommittedFixtures() {
+        // Alerts: Alert.getRule() is a possibly-lazy @ManyToOne, but only
+        // its identifier (getId()) is read here, which is always safe on a
+        // Hibernate proxy without an active session.
         alertRepository.findAll().stream()
             .filter(a -> a.getRule() != null && createdRuleIds.contains(a.getRule().getId()))
             .forEach(alertRepository::delete);
 
+        // Resolve this test's snapshot ids via a repository query scoped to
+        // the endpoints it created, rather than by navigating
+        // RunningApp -> snapshot -> endpoint (which would require
+        // initializing a LAZY RunningAppSnapshot proxy's non-identifier
+        // fields outside of any active session, throwing
+        // LazyInitializationException - the exact defect being fixed here).
+        Set<UUID> snapshotIds = createdEndpointIds.stream()
+            .flatMap(id -> runningAppSnapshotRepository
+                .findByEndpoint_IdOrderByCapturedAtDesc(id, Pageable.unpaged())
+                .stream())
+            .map(RunningAppSnapshot::getId)
+            .collect(Collectors.toSet());
+
+        // RunningApp.getSnapshot().getId() - identifier-only access on a
+        // (possibly) lazy proxy, safe without a session. getEndpoint() is
+        // deliberately never called here.
         runningAppRepository.findAll().stream()
-            .filter(a -> a.getSnapshot() != null
-                && a.getSnapshot().getEndpoint() != null
-                && createdEndpointIds.contains(a.getSnapshot().getEndpoint().getId()))
+            .filter(a -> a.getSnapshot() != null && snapshotIds.contains(a.getSnapshot().getId()))
             .forEach(runningAppRepository::delete);
 
         runningAppSnapshotRepository.findAll().stream()
-            .filter(s -> s.getEndpoint() != null && createdEndpointIds.contains(s.getEndpoint().getId()))
+            .filter(s -> snapshotIds.contains(s.getId()))
             .forEach(runningAppSnapshotRepository::delete);
 
         createdRuleIds.forEach(detectionRuleRepository::deleteById);
@@ -215,11 +257,20 @@ class SuspiciousProcessDetectionIntegrationTest {
         createdEndpointIds.clear();
     }
 
-    private EndpointDevice persistEndpoint() {
+    private static String uniqueAgentToken() {
+        // Unique per test method (and per call, if a test ever needs more
+        // than one endpoint) so an incomplete cleanup in one test can never
+        // collide with endpoint_devices_agent_token_hash_key in another -
+        // defense-in-depth on top of the @AfterEach fix above, not a
+        // replacement for it.
+        return AGENT_TOKEN_PREFIX + UUID.randomUUID();
+    }
+
+    private EndpointDevice persistEndpoint(String agentToken) {
         EndpointDevice endpoint = new EndpointDevice();
         endpoint.setHostname("IT-SUSPICIOUS-PROCESS-ENDPOINT-" + UUID.randomUUID());
         endpoint.setMacAddress(randomMacAddress());
-        endpoint.setAgentTokenHash(TokenHasher.sha256Hex(AGENT_TOKEN));
+        endpoint.setAgentTokenHash(TokenHasher.sha256Hex(agentToken));
         EndpointDevice saved = endpointDeviceRepository.save(endpoint);
         createdEndpointIds.add(saved.getId());
         return saved;
