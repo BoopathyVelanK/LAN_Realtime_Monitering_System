@@ -18,4 +18,16 @@ public interface RunningAppRepository extends JpaRepository<RunningApp, UUID> {
      * rather than any field directly on RunningApp. */
     boolean existsBySnapshot_Endpoint_IdAndProcessNameIgnoreCaseAndSnapshot_CapturedAtAfter(
         UUID endpointId, String processName, Instant since);
+
+    /** Backs PowerShellDetector's POWERSHELL_MATCH check: an exact,
+     * case-insensitive process-name match ANDed with a case-insensitive
+     * substring match against commandLine, for one endpoint, scoped to
+     * running-app snapshots captured after a given instant - the same
+     * endpoint/time scoping as the PROCESS_MATCH query above, plus the
+     * command-line substring condition the rule's processName +
+     * commandPattern configuration requires. A null commandLine (older
+     * agents - see RunningApp's Javadoc) simply never matches; it is not
+     * treated as an error. */
+    boolean existsBySnapshot_Endpoint_IdAndProcessNameIgnoreCaseAndCommandLineContainingIgnoreCaseAndSnapshot_CapturedAtAfter(
+        UUID endpointId, String processName, String commandPattern, Instant since);
 }

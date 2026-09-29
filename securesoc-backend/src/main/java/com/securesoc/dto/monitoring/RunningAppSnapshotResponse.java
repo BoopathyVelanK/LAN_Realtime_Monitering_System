@@ -18,6 +18,7 @@ public record RunningAppSnapshotResponse(
     public record AppEntry(
         String processName,
         String windowTitle,
-        Integer pid
+        Integer pid,
+        String commandLine
     ) {}
 }

@@ -17,7 +17,7 @@ import java.util.UUID;
 @NoArgsConstructor
 public class DetectionRule {
 
-    public enum RuleType { THRESHOLD, PROCESS_MATCH }
+    public enum RuleType { THRESHOLD, PROCESS_MATCH, POWERSHELL_MATCH }
 
     public enum Severity { LOW, MEDIUM, HIGH, CRITICAL }
 
@@ -53,6 +53,15 @@ public class DetectionRule {
      * null for non-THRESHOLD rules. */
     @Column(name = "process_name", length = 255)
     private String processName;
+
+    /** Case-insensitive substring to match against a RunningApp's
+     * commandLine, for a POWERSHELL_MATCH rule (e.g. "-encodedcommand",
+     * "downloadstring") - used together with processName (reused from
+     * PROCESS_MATCH above) - see PowerShellDetector. Null for every other
+     * rule type, same as processName being null for non-PROCESS_MATCH/
+     * non-POWERSHELL_MATCH rules. */
+    @Column(name = "command_pattern", length = 500)
+    private String commandPattern;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

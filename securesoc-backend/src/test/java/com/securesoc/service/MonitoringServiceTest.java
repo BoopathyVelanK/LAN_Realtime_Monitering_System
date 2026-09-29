@@ -116,8 +116,8 @@ class MonitoringServiceTest {
         device.setHostname("test-host");
 
         RunningAppsRequest request = new RunningAppsRequest(List.of(
-            new RunningAppsRequest.AppEntry("powershell.exe", null, 1234),
-            new RunningAppsRequest.AppEntry("explorer.exe", null, 5678)
+            new RunningAppsRequest.AppEntry("powershell.exe", null, 1234, "powershell.exe -EncodedCommand ABC"),
+            new RunningAppsRequest.AppEntry("explorer.exe", null, 5678, null)
         ));
 
         when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))
@@ -135,7 +135,10 @@ class MonitoringServiceTest {
         assertEquals(2, persistedSnapshot.getApps().size());
         assertEquals("powershell.exe", persistedSnapshot.getApps().get(0).getProcessName());
         assertEquals(1234, persistedSnapshot.getApps().get(0).getPid());
+        assertEquals("powershell.exe -EncodedCommand ABC", persistedSnapshot.getApps().get(0).getCommandLine());
         assertEquals("explorer.exe", persistedSnapshot.getApps().get(1).getProcessName());
+        assertNull(persistedSnapshot.getApps().get(1).getCommandLine(),
+            "commandLine must be nullable for backward compatibility with older agents");
         assertNotNull(persistedSnapshot.getCapturedAt());
 
         ArgumentCaptor<DetectionContext> contextCaptor = ArgumentCaptor.forClass(DetectionContext.class);
@@ -155,7 +158,7 @@ class MonitoringServiceTest {
         device.setId(UUID.randomUUID());
 
         RunningAppsRequest request = new RunningAppsRequest(List.of(
-            new RunningAppsRequest.AppEntry("chrome.exe", null, 42)
+            new RunningAppsRequest.AppEntry("chrome.exe", null, 42, null)
         ));
 
         when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))
@@ -174,7 +177,7 @@ class MonitoringServiceTest {
         device.setId(UUID.randomUUID());
 
         RunningAppsRequest request = new RunningAppsRequest(List.of(
-            new RunningAppsRequest.AppEntry("powershell.exe", null, 99)
+            new RunningAppsRequest.AppEntry("powershell.exe", null, 99, null)
         ));
 
         when(runningAppPersistenceExecutor.persist(any(RunningAppSnapshot.class)))

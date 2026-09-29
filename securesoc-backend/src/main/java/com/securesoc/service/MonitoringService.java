@@ -131,6 +131,7 @@ public class MonitoringService {
             app.setProcessName(entry.processName());
             app.setWindowTitle(entry.windowTitle());
             app.setPid(entry.pid());
+            app.setCommandLine(entry.commandLine());
             snapshot.getApps().add(app);
         }
 
@@ -449,7 +450,7 @@ public class MonitoringService {
         return PageResponse.of(page.map(s -> new RunningAppSnapshotResponse(
             s.getId(), s.getEndpoint().getId(), s.getEndpoint().getHostname(), s.getCapturedAt(),
             s.getApps().stream()
-                .map(a -> new RunningAppSnapshotResponse.AppEntry(a.getProcessName(), a.getWindowTitle(), a.getPid()))
+                .map(a -> new RunningAppSnapshotResponse.AppEntry(a.getProcessName(), a.getWindowTitle(), a.getPid(), a.getCommandLine()))
                 .toList()
         )));
     }
