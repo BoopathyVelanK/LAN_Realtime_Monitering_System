@@ -114,25 +114,55 @@ def get_current_os_user() -> str:
         return "unknown"
 
 
-def get_running_applications(limit: int = 50) -> list[dict]:
-    """Snapshot of currently running processes.
+def get_running_applications(limit: int = 10000) -> list[dict]:
+    """Snapshot of currently running processes, including each process's
+    command line (used by the backend's PowerShellDetector, among other
+    things).
 
     NOTE — window_title: getting the actual foreground window title needs
     OS-specific APIs (pywin32's GetForegroundWindow on Windows). This is a
     cross-platform Phase 3 build, so window_title is left None here; wiring
     it up is a small, well-contained addition once this runs on a real
     Windows lab machine with pywin32 installed.
+
+    NOTE — command_line: read via psutil's Process.cmdline(), a separate
+    OS call from the pid/name attributes above that can fail independently
+    of them (a process can exit between the two calls, or deny access to
+    its command line specifically while its name is still readable). That
+    failure is caught on its own so one process's missing command line
+    never drops the process from the snapshot and never aborts the whole
+    collection cycle — it is simply reported with commandLine=None, the
+    same defensive pattern already used for window_title above.
+
+    limit: a defensive upper bound only, not a meaningful telemetry
+    cutoff — a normal endpoint runs at most a few hundred processes. This
+    replaces the previous hard cap of 50, which could silently drop
+    legitimate processes (including powershell.exe) purely because of OS
+    enumeration order — unacceptable for security telemetry. The new
+    default is high enough to never be hit in normal operation; it exists
+    solely so a wildly abnormal environment cannot make one collection
+    cycle consume unbounded memory/time.
     """
     apps = []
     for proc in psutil.process_iter(["pid", "name"]):
         try:
-            apps.append({
-                "processName": proc.info.get("name"),
-                "windowTitle": None,
-                "pid": proc.info.get("pid"),
-            })
+            process_name = proc.info.get("name")
+            pid = proc.info.get("pid")
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+
+        try:
+            cmdline_parts = proc.cmdline()
+            command_line = " ".join(cmdline_parts) if cmdline_parts else None
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            command_line = None
+
+        apps.append({
+            "processName": process_name,
+            "windowTitle": None,
+            "pid": pid,
+            "commandLine": command_line,
+        })
         if len(apps) >= limit:
             break
     return apps
