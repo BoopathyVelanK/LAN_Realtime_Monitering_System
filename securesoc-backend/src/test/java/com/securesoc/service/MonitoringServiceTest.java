@@ -63,6 +63,7 @@ class MonitoringServiceTest {
     @Mock private UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     @Mock private VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
     @Mock private RunningAppPersistenceExecutor runningAppPersistenceExecutor;
+    @Mock private NetworkUsageEventPersistenceExecutor networkUsageEventPersistenceExecutor;
     @Mock private DetectionEvaluationExecutor detectionEvaluationExecutor;
     @Mock private FacultyScopeService facultyScopeService;
 
@@ -86,6 +87,7 @@ class MonitoringServiceTest {
             usbEventPersistenceExecutor,
             vpnEventPersistenceExecutor,
             runningAppPersistenceExecutor,
+            networkUsageEventPersistenceExecutor,
             detectionEvaluationExecutor,
             facultyScopeService
         );
@@ -308,6 +310,9 @@ class MonitoringServiceTest {
         Instant sampledAt = Instant.now().minusSeconds(120);
         NetworkUsageEventRequest request = new NetworkUsageEventRequest(1000L, 2000L, null, sampledAt);
 
+        when(networkUsageEventPersistenceExecutor.persist(any(NetworkUsageEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
         Instant before = Instant.now();
         MonitoringIngestResponse response = monitoringService.recordNetworkUsage(device, request);
         Instant after = Instant.now();
@@ -315,7 +320,7 @@ class MonitoringServiceTest {
         assertEquals("Network usage recorded.", response.message());
 
         ArgumentCaptor<NetworkUsageEvent> captor = ArgumentCaptor.forClass(NetworkUsageEvent.class);
-        verify(networkUsageEventRepository).save(captor.capture());
+        verify(networkUsageEventPersistenceExecutor).persist(captor.capture());
         NetworkUsageEvent persisted = captor.getValue();
 
         assertEquals(sampledAt, persisted.getSampledAt());
@@ -334,14 +339,99 @@ class MonitoringServiceTest {
         // its offline queue before sampledAt existed.
         NetworkUsageEventRequest request = new NetworkUsageEventRequest(500L, 700L, null, null);
 
+        when(networkUsageEventPersistenceExecutor.persist(any(NetworkUsageEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
         monitoringService.recordNetworkUsage(device, request);
 
         ArgumentCaptor<NetworkUsageEvent> captor = ArgumentCaptor.forClass(NetworkUsageEvent.class);
-        verify(networkUsageEventRepository).save(captor.capture());
+        verify(networkUsageEventPersistenceExecutor).persist(captor.capture());
         NetworkUsageEvent persisted = captor.getValue();
 
         assertNull(persisted.getSampledAt());
         assertNotNull(persisted.getRecordedAt());
+    }
+
+    @Test
+    void recordNetworkUsage_persistsEventAndCallsDetectionEvaluationExecutor_withCorrectContext() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+        device.setHostname("test-host");
+
+        Instant sampledAt = Instant.now().minusSeconds(120);
+        NetworkUsageEventRequest request = new NetworkUsageEventRequest(1000L, 2000L, "Ethernet", sampledAt);
+
+        when(networkUsageEventPersistenceExecutor.persist(any(NetworkUsageEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        MonitoringIngestResponse response = monitoringService.recordNetworkUsage(device, request);
+
+        assertEquals("Network usage recorded.", response.message());
+
+        ArgumentCaptor<NetworkUsageEvent> eventCaptor = ArgumentCaptor.forClass(NetworkUsageEvent.class);
+        verify(networkUsageEventPersistenceExecutor).persist(eventCaptor.capture());
+        NetworkUsageEvent persistedEvent = eventCaptor.getValue();
+        assertEquals(device, persistedEvent.getEndpoint());
+        assertEquals(1000L, persistedEvent.getBytesSent());
+        assertEquals(2000L, persistedEvent.getBytesReceived());
+        assertEquals("Ethernet", persistedEvent.getInterfaceName());
+
+        ArgumentCaptor<DetectionContext> contextCaptor = ArgumentCaptor.forClass(DetectionContext.class);
+        verify(detectionEvaluationExecutor).evaluate(contextCaptor.capture());
+        DetectionContext context = contextCaptor.getValue();
+        assertEquals("NETWORK_USAGE", context.eventSource());
+        assertEquals(device.getId(), context.endpointId());
+        assertNull(context.userId());
+        assertEquals(sampledAt, context.occurredAt());
+        assertNull(context.event());
+
+        // The legacy direct-save path is no longer used for network usage.
+        verify(networkUsageEventRepository, never()).save(any(NetworkUsageEvent.class));
+    }
+
+    @Test
+    void recordNetworkUsage_withNullSampledAt_detectionContextFallsBackToRecordedAt() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        NetworkUsageEventRequest request = new NetworkUsageEventRequest(500L, 700L, null, null);
+
+        when(networkUsageEventPersistenceExecutor.persist(any(NetworkUsageEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        monitoringService.recordNetworkUsage(device, request);
+
+        ArgumentCaptor<NetworkUsageEvent> eventCaptor = ArgumentCaptor.forClass(NetworkUsageEvent.class);
+        verify(networkUsageEventPersistenceExecutor).persist(eventCaptor.capture());
+        NetworkUsageEvent persistedEvent = eventCaptor.getValue();
+        assertNull(persistedEvent.getSampledAt());
+
+        ArgumentCaptor<DetectionContext> contextCaptor = ArgumentCaptor.forClass(DetectionContext.class);
+        verify(detectionEvaluationExecutor).evaluate(contextCaptor.capture());
+        assertNotNull(contextCaptor.getValue().occurredAt());
+        assertEquals(persistedEvent.getRecordedAt(), contextCaptor.getValue().occurredAt());
+    }
+
+    @Test
+    void recordNetworkUsage_detectionEvaluationExecutorThrows_stillReturnsSuccessResponse_andEventWasAlreadyPersisted() {
+        EndpointDevice device = new EndpointDevice();
+        device.setId(UUID.randomUUID());
+
+        NetworkUsageEventRequest request = new NetworkUsageEventRequest(1000L, 2000L, null, Instant.now());
+
+        when(networkUsageEventPersistenceExecutor.persist(any(NetworkUsageEvent.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(detectionEvaluationExecutor.evaluate(any(DetectionContext.class)))
+            .thenThrow(new RuntimeException("simulated detection failure"));
+
+        MonitoringIngestResponse response = monitoringService.recordNetworkUsage(device, request);
+
+        assertEquals("Network usage recorded.", response.message());
+
+        // Persistence (committed in its own transaction) happened strictly
+        // before the detection call that threw.
+        verify(networkUsageEventPersistenceExecutor).persist(any(NetworkUsageEvent.class));
+        verify(detectionEvaluationExecutor).evaluate(any(DetectionContext.class));
     }
 
     @Test

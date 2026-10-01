@@ -52,6 +52,7 @@ public class MonitoringService {
     private final UsbEventPersistenceExecutor usbEventPersistenceExecutor;
     private final VpnEventPersistenceExecutor vpnEventPersistenceExecutor;
     private final RunningAppPersistenceExecutor runningAppPersistenceExecutor;
+    private final NetworkUsageEventPersistenceExecutor networkUsageEventPersistenceExecutor;
     private final DetectionEvaluationExecutor detectionEvaluationExecutor;
     private final FacultyScopeService facultyScopeService;
 
@@ -67,6 +68,7 @@ public class MonitoringService {
         UsbEventPersistenceExecutor usbEventPersistenceExecutor,
         VpnEventPersistenceExecutor vpnEventPersistenceExecutor,
         RunningAppPersistenceExecutor runningAppPersistenceExecutor,
+        NetworkUsageEventPersistenceExecutor networkUsageEventPersistenceExecutor,
         DetectionEvaluationExecutor detectionEvaluationExecutor,
         FacultyScopeService facultyScopeService
     ) {
@@ -81,6 +83,7 @@ public class MonitoringService {
         this.usbEventPersistenceExecutor = usbEventPersistenceExecutor;
         this.vpnEventPersistenceExecutor = vpnEventPersistenceExecutor;
         this.runningAppPersistenceExecutor = runningAppPersistenceExecutor;
+        this.networkUsageEventPersistenceExecutor = networkUsageEventPersistenceExecutor;
         this.detectionEvaluationExecutor = detectionEvaluationExecutor;
         this.facultyScopeService = facultyScopeService;
     }
@@ -279,7 +282,11 @@ public class MonitoringService {
         return MonitoringIngestResponse.ok("Idle time recorded.");
     }
 
-    @Transactional
+    // Deliberately NOT @Transactional at this level - see
+    // NetworkUsageEventPersistenceExecutor's javadoc. NetworkUsageDetector
+    // sums bytes with a database query, so the row that triggered
+    // detection must already be committed (not merely flushed) before
+    // detection's own REQUIRES_NEW transaction begins.
     public MonitoringIngestResponse recordNetworkUsage(EndpointDevice device, NetworkUsageEventRequest request) {
         NetworkUsageEvent event = new NetworkUsageEvent();
         event.setEndpoint(device);
@@ -291,7 +298,33 @@ public class MonitoringService {
         // upgrade) - recordedAt (below, via the entity's own default)
         // still always reflects real backend ingestion time regardless.
         event.setSampledAt(request.sampledAt());
-        networkUsageEventRepository.save(event);
+
+        NetworkUsageEvent persisted = networkUsageEventPersistenceExecutor.persist(event);
+
+        // Same effective timestamp NetworkUsageEventRepository.sumTotalBytesInWindow
+        // uses: the agent's sampledAt, falling back to recordedAt for legacy rows.
+        Instant occurredAt = persisted.getSampledAt() != null
+            ? persisted.getSampledAt()
+            : persisted.getRecordedAt();
+
+        DetectionContext context = new DetectionContext(
+            "NETWORK_USAGE",
+            device.getId(),
+            null,
+            occurredAt,
+            null
+        );
+
+        // Detection failure must never cost us the telemetry committed
+        // above; mirrors recordUsb()/recordVpn()/recordRunningApps().
+        try {
+            detectionEvaluationExecutor.evaluate(context);
+        } catch (RuntimeException detectionFailure) {
+            log.error("Detection engine failed while evaluating a NETWORK_USAGE event for endpoint {}. "
+                + "The network usage telemetry was already persisted and is unaffected.",
+                device.getId(), detectionFailure);
+        }
+
         return MonitoringIngestResponse.ok("Network usage recorded.");
     }
 
