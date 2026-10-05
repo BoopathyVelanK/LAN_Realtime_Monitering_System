@@ -16,6 +16,8 @@ public interface EndpointDeviceRepository extends JpaRepository<EndpointDevice, 
 
     Optional<EndpointDevice> findByMacAddress(String macAddress);
 
+    Optional<EndpointDevice> findByDeviceId(String deviceId);
+
     Optional<EndpointDevice> findByAgentTokenHash(String agentTokenHash);
 
     List<EndpointDevice> findByStatusAndLastHeartbeatAtBefore(

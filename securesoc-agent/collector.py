@@ -30,6 +30,45 @@ def get_mac_address() -> str:
     return mac_hex.upper()
 
 
+def get_machine_guid() -> str | None:
+    """Windows MachineGuid (HKLM\\SOFTWARE\\Microsoft\\Cryptography), sent to
+    the backend as 'deviceId' — a stable per-installation identity that,
+    unlike the MAC address from get_mac_address(), does not change when
+    Windows enumerates a different network adapter (e.g. VMware/VPN
+    adapters) or when the IP changes.
+
+    Returns lower-cased, stripped text, or None when it cannot be read
+    (non-Windows host, key missing, access denied, empty/non-string value).
+    None means collect_registration_payload() simply omits 'deviceId' and
+    the backend falls back to MAC-based matching, exactly as before.
+
+    Only called while building the registration payload — never from the
+    heartbeat or monitoring paths — and deliberately never logged: callers
+    must not write this value to agent.log."""
+    try:
+        import winreg  # Windows-only stdlib module; ImportError elsewhere
+    except ImportError:
+        return None
+
+    try:
+        # KEY_WOW64_64KEY: a 32-bit Python on 64-bit Windows would otherwise
+        # read the redirected 32-bit registry view, which has no MachineGuid.
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Cryptography",
+            0,
+            winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+        ) as key:
+            value, _value_type = winreg.QueryValueEx(key, "MachineGuid")
+    except OSError:
+        return None
+
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value or None
+
+
 def get_ip_address() -> str:
     """Best-effort LAN IP — opens a UDP socket to a public IP without
     actually sending any traffic, just to see which local interface the
@@ -81,6 +120,11 @@ def collect_registration_payload(agent_version: str, lab_id: str | None) -> dict
     }
     if lab_id:
         payload["labId"] = lab_id
+    # Stable device identity (see get_machine_guid). Omitted entirely when
+    # unavailable so the backend uses its legacy MAC-based lookup.
+    device_id = get_machine_guid()
+    if device_id:
+        payload["deviceId"] = device_id
     return payload
 
 

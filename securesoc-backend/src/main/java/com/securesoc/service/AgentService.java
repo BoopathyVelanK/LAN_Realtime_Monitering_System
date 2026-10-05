@@ -10,14 +10,20 @@ import com.securesoc.exception.UnauthorizedException;
 import com.securesoc.repository.EndpointDeviceRepository;
 import com.securesoc.repository.LaboratoryRepository;
 import com.securesoc.security.TokenHasher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class AgentService {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
     private final EndpointDeviceRepository endpointDeviceRepository;
     private final LaboratoryRepository laboratoryRepository;
@@ -37,12 +43,18 @@ public class AgentService {
     }
 
     /**
-     * Registration is idempotent on MAC address: an agent that already has
-     * a valid local state file never calls this (see agent.py's
-     * AgentState), but a machine re-registering after its state file was
-     * lost gets a FRESH token issued for the SAME device record rather
-     * than a duplicate row - the old token is implicitly invalidated by
-     * being overwritten.
+     * Registration is idempotent on the endpoint's stable identity: an agent
+     * that already has a valid local state file never calls this (see
+     * agent.py's AgentState), but a machine re-registering after its state
+     * file was lost gets a FRESH token issued for the SAME device record
+     * rather than a duplicate row - the old token is implicitly invalidated
+     * by being overwritten.
+     *
+     * Lookup order (see {@link #findExistingDevice}): deviceId (Windows
+     * MachineGuid) when the agent sent one, then MAC address (legacy agents,
+     * and legacy rows that predate device_id), otherwise a new row. MAC
+     * address is stored and updated as metadata but is no longer the only
+     * way to recognise a device.
      */
     @Transactional
     public AgentRegisterResponse register(AgentRegisterRequest request, String presentedSecret) {
@@ -50,11 +62,17 @@ public class AgentService {
             throw new UnauthorizedException("Invalid agent registration secret");
         }
 
-        EndpointDevice device = endpointDeviceRepository.findByMacAddress(request.macAddress())
+        String deviceId = normalizeDeviceId(request.deviceId());
+
+        EndpointDevice device = findExistingDevice(deviceId, request.macAddress())
             .orElseGet(EndpointDevice::new);
 
         device.setHostname(request.hostname());
-        device.setMacAddress(request.macAddress());
+        applyMacAddress(device, request.macAddress());
+        if (deviceId != null && device.getDeviceId() == null) {
+            // New device, or a legacy row (found via MAC) adopting its stable identity.
+            device.setDeviceId(deviceId);
+        }
         device.setIpAddress(request.ipAddress());
         device.setOsName(request.osName());
         device.setOsVersion(request.osVersion());
@@ -84,6 +102,57 @@ public class AgentService {
             : "Registered and assigned to " + device.getLab().getName() + ".";
 
         return new AgentRegisterResponse(saved.getId(), rawToken, "OFFLINE", message);
+    }
+
+    /** deviceId first (when sent), then MAC. Falling back to MAC even when a
+     * deviceId was sent is what lets a legacy row (device_id NULL) be adopted
+     * instead of duplicated. If that MAC row already belongs to a DIFFERENT
+     * deviceId it is a different machine claiming the same MAC; mac_address is
+     * still UNIQUE, so a second row cannot be created - reject rather than
+     * hijack the other device's row or fail later with a constraint error. */
+    private Optional<EndpointDevice> findExistingDevice(String deviceId, String macAddress) {
+        if (deviceId != null) {
+            Optional<EndpointDevice> byDeviceId = endpointDeviceRepository.findByDeviceId(deviceId);
+            if (byDeviceId.isPresent()) {
+                return byDeviceId;
+            }
+        }
+
+        Optional<EndpointDevice> byMac = endpointDeviceRepository.findByMacAddress(macAddress);
+        if (deviceId != null && byMac.isPresent()
+            && byMac.get().getDeviceId() != null
+            && !deviceId.equals(byMac.get().getDeviceId())) {
+            throw new IllegalArgumentException(
+                "MAC address is already registered to a different device identity");
+        }
+        return byMac;
+    }
+
+    /** Updates the stored MAC on an existing device unless another row
+     * already owns the new one (mac_address is UNIQUE). MAC is metadata once
+     * a deviceId identifies the row, so keeping the previous value is safer
+     * than failing the whole registration; no deviceId is ever logged. */
+    private void applyMacAddress(EndpointDevice device, String macAddress) {
+        if (macAddress.equals(device.getMacAddress())) {
+            return;
+        }
+        if (device.getId() != null) {
+            Optional<EndpointDevice> owner = endpointDeviceRepository.findByMacAddress(macAddress);
+            if (owner.isPresent() && !owner.get().getId().equals(device.getId())) {
+                log.warn("Keeping existing MAC for endpoint {}: the reported MAC is already registered to another endpoint.",
+                    device.getId());
+                return;
+            }
+        }
+        device.setMacAddress(macAddress);
+    }
+
+    private static String normalizeDeviceId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? null : trimmed.toLowerCase(Locale.ROOT);
     }
 
     /** Caller (AgentController) has already authenticated the device via

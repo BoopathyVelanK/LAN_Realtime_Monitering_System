@@ -1,6 +1,7 @@
 package com.securesoc.dto.agent;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 /** Field names match collector.py's collect_registration_payload() keys
  * exactly (agent.py sends this as JSON to POST /agents/register). */
@@ -14,5 +15,6 @@ public record AgentRegisterRequest(
     Integer ramMb,
     Integer diskGb,
     String agentVersion,
-    String labId // optional - unassigned until an admin assigns a lab
+    String labId, // optional - unassigned until an admin assigns a lab
+    @Size(max = 64) String deviceId // optional - Windows MachineGuid; absent for legacy agents
 ) {}

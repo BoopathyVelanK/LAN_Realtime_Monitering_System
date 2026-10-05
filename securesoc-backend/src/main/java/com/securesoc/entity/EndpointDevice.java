@@ -27,6 +27,13 @@ public class EndpointDevice {
     @Column(name = "mac_address", nullable = false, unique = true, length = 17)
     private String macAddress;
 
+    /** Stable endpoint identity (Windows MachineGuid, normalised to trimmed
+     * lower-case by AgentService). Nullable: legacy rows registered before
+     * V14 have none. Unique when present - see V14's index. Never exposed
+     * through the frontend DTOs. */
+    @Column(name = "device_id", unique = true, length = 64)
+    private String deviceId;
+
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
 
