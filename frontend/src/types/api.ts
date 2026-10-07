@@ -186,9 +186,15 @@ export interface NetworkUsageEventResponse {
   id: string;
   endpointId: string;
   hostname: string;
-  bytesSent: number;
-  bytesReceived: number;
+  /** Bytes sent since the endpoint's previous sample (a delta, not a total).
+   * Backend type is a nullable Long, so a malformed row can carry null. */
+  bytesSent: number | null;
+  bytesReceived: number | null;
   interfaceName: string | null;
+  /** Agent's collection time (ISO-8601). Null/absent for rows recorded
+   * before the field existed or by a not-yet-upgraded agent. */
+  sampledAt?: string | null;
+  /** Backend ingestion time (ISO-8601). */
   recordedAt: string;
 }
 

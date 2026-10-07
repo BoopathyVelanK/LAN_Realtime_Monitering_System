@@ -73,11 +73,15 @@ export function useIdleEvents(params?: MonitoringListParams) {
   });
 }
 
-export function useNetworkUsageEvents(params?: MonitoringListParams) {
+export function useNetworkUsageEvents(
+  params?: MonitoringListParams,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: queryKeys.networkUsageEvents(params),
     queryFn: () => dashboardApi.getNetworkUsageEvents(params),
     refetchInterval: 15_000,
+    enabled: options?.enabled ?? true,
   });
 }
 
