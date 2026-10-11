@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * End-to-end proof that a detected {@link DetectionResult} survives the
  * full production path - {@link AlertService}, the real Spring Data JPA
- * repositories, and Flyway's actual V1-V8 migrations - against a real
+ * repositories, and Flyway's actual V1-V15 migrations - against a real
  * PostgreSQL instance, not H2 and not a developer's local database.
  *
  * The PostgreSQL instance is an ephemeral Testcontainers container: a
@@ -159,6 +159,111 @@ class AlertPersistenceIntegrationTest {
         assertEquals(Alert.Status.OPEN, alertsForUserAndRule.get(0).getStatus());
     }
 
+
+    @Test
+    void sequentialDuplicateEndpointDetections_reuseOneOpenAlert() {
+        DetectionRule rule = persistRule();
+        EndpointDevice endpoint = persistEndpoint();
+        commitFixtures();
+
+        DetectionResult result = detectionResultFor(rule, null, endpoint);
+
+        Alert first = alertService.createAlertFrom(result).orElseThrow();
+        alertRepository.flush();
+
+        Alert second = alertService.createAlertFrom(result).orElseThrow();
+        alertRepository.flush();
+
+        assertEquals(
+            first.getId(),
+            second.getId(),
+            "Repeated detections for the same endpoint and rule must reuse the OPEN alert"
+        );
+
+        assertEquals(Alert.Status.OPEN, second.getStatus());
+        assertEquals(endpoint.getId(), second.getEndpoint().getId());
+        assertEquals(rule.getId(), second.getRule().getId());
+    }
+
+
+@Test
+void acknowledgedEndpointAlert_allowsNewOpenAlert() {
+    DetectionRule rule = persistRule();
+    EndpointDevice endpoint = persistEndpoint();
+    commitFixtures();
+
+    DetectionResult result = detectionResultFor(rule, null, endpoint);
+
+    Alert first = alertService.createAlertFrom(result).orElseThrow();
+    alertRepository.flush();
+
+    first.setStatus(Alert.Status.ACKNOWLEDGED);
+    alertRepository.saveAndFlush(first);
+    commitFixtures();
+
+    Alert second = alertService.createAlertFrom(result).orElseThrow();
+    alertRepository.flush();
+
+    assertNotEquals(first.getId(), second.getId());
+    assertEquals(Alert.Status.ACKNOWLEDGED, first.getStatus());
+    assertEquals(Alert.Status.OPEN, second.getStatus());
+}
+
+    @Test
+    void resolvedEndpointAlert_allowsNewOpenAlert() {
+        DetectionRule rule = persistRule();
+        EndpointDevice endpoint = persistEndpoint();
+        commitFixtures();
+
+        DetectionResult result = detectionResultFor(rule, null, endpoint);
+
+        Alert first = alertService.createAlertFrom(result).orElseThrow();
+        alertRepository.flush();
+
+        first.setStatus(Alert.Status.RESOLVED);
+        alertRepository.saveAndFlush(first);
+        commitFixtures();
+
+        Alert second = alertService.createAlertFrom(result).orElseThrow();
+        alertRepository.flush();
+
+        assertNotEquals(first.getId(), second.getId());
+        assertEquals(Alert.Status.RESOLVED, first.getStatus());
+        assertEquals(Alert.Status.OPEN, second.getStatus());
+    }
+
+
+    @Test
+    void endpointDeduplication_doesNotCrossEndpointsOrRules() {
+        DetectionRule ruleA = persistRule();
+        DetectionRule ruleB = persistRule();
+        EndpointDevice endpointA = persistEndpoint();
+        EndpointDevice endpointB = persistEndpoint();
+        commitFixtures();
+
+        Alert endpointA_ruleA = alertService.createAlertFrom(
+            detectionResultFor(ruleA, null, endpointA)).orElseThrow();
+
+        Alert endpointB_ruleA = alertService.createAlertFrom(
+            detectionResultFor(ruleA, null, endpointB)).orElseThrow();
+
+        Alert endpointA_ruleB = alertService.createAlertFrom(
+            detectionResultFor(ruleB, null, endpointA)).orElseThrow();
+
+        alertRepository.flush();
+
+        assertNotEquals(endpointA_ruleA.getId(), endpointB_ruleA.getId(),
+            "Different endpoints must have separate alerts for the same rule");
+
+        assertNotEquals(endpointA_ruleA.getId(), endpointA_ruleB.getId(),
+            "Different rules must have separate alerts for the same endpoint");
+
+        assertEquals(1, alertRepository
+            .findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+                endpointA.getId(), ruleA.getId(), Alert.Status.OPEN).stream().count());
+    }
+
+
     @Test
     void acknowledgedAlert_allowsANewOpenAlertForSameUserAndRule() {
         DetectionRule rule = persistRule();
@@ -271,6 +376,46 @@ class AlertPersistenceIntegrationTest {
         assertFalse(rows.isEmpty(),
             "V8__add_alert_open_dedup_index.sql must have created idx_alerts_open_user_rule_dedup on alerts");
     }
+
+    @Test
+    void postgresUniqueIndex_rejectsDuplicateOpenEndpointAlert() {
+        DetectionRule rule = persistRule();
+        EndpointDevice endpoint = persistEndpoint();
+
+        Alert first = rawAlert(rule, null, Alert.Status.OPEN);
+        first.setEndpoint(endpoint);
+        alertRepository.saveAndFlush(first);
+
+        Alert duplicate = rawAlert(rule, null, Alert.Status.OPEN);
+        duplicate.setEndpoint(endpoint);
+
+        assertThrows(
+            DataIntegrityViolationException.class,
+            () -> alertRepository.saveAndFlush(duplicate),
+            "V15 must reject a second OPEN alert for the same endpoint and rule"
+        );
+    }
+
+    @Test
+    void v15Migration_appliesSuccessfullyAndCreatesEndpointDedupIndex() {
+        @SuppressWarnings("unchecked")
+        List<Object> rows = entityManager.createNativeQuery(
+                "SELECT 1 FROM pg_indexes " +
+                "WHERE tablename = 'alerts' " +
+                "AND indexname = :indexName"
+            )
+            .setParameter(
+                "indexName",
+                "idx_alerts_open_endpoint_rule_dedup"
+            )
+            .getResultList();
+
+        assertFalse(
+            rows.isEmpty(),
+            "V15 must create idx_alerts_open_endpoint_rule_dedup"
+        );
+    }
+
 
     // =====================================================================
     // Helpers

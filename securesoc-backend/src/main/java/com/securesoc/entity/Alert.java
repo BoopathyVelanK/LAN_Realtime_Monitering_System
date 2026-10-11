@@ -20,7 +20,12 @@ public class Alert {
 
     public enum Severity { LOW, MEDIUM, HIGH, CRITICAL }
 
-    public enum Status { OPEN, ACKNOWLEDGED, RESOLVED }
+    public enum Status {
+        OPEN,
+        ACKNOWLEDGED,
+        RESOLVED,
+        SUPERSEDED
+    }
 
     @Id
     @GeneratedValue

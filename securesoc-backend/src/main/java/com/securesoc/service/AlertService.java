@@ -130,15 +130,26 @@ public class AlertService {
 
         Alert saved;
         boolean isNewAlert;
-        if (user == null) {
-            // No user to deduplicate against - create normally, exactly as
-            // before deduplication existed.
-            saved = alertRepository.save(alert);
-            isNewAlert = true;
-        } else {
-            AlertOrReuse result2 = createOrReuseForUser(alert, user.getId(), rule.getId());
+
+        if (user != null) {
+            AlertOrReuse result2 =
+                createOrReuseForUser(alert, user.getId(), rule.getId());
+
             saved = result2.alert();
             isNewAlert = result2.isNew();
+        } else if (alert.getEndpoint() != null) {
+            AlertOrReuse result2 = createOrReuseForEndpoint(
+                alert,
+                alert.getEndpoint().getId(),
+                rule.getId()
+            );
+
+            saved = result2.alert();
+            isNewAlert = result2.isNew();
+        } else {
+            // No user and no endpoint: retain existing behavior.
+            saved = alertRepository.save(alert);
+            isNewAlert = true;
         }
 
         if (isNewAlert) {
@@ -169,24 +180,78 @@ public class AlertService {
      * javadoc for why that isolation is required given how
      * {@code DetectionEngine.evaluate()} calls this method.
      */
-    private AlertOrReuse createOrReuseForUser(Alert alert, UUID userId, UUID ruleId) {
+    /**
+     * Deduplicates OPEN alerts by (user_id, rule_id).
+     * The database unique index handles concurrent insert races.
+     */
+    private AlertOrReuse createOrReuseForUser(
+            Alert alert,
+            UUID userId,
+            UUID ruleId
+    ) {
         Optional<Alert> existing =
-            alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN);
+                alertRepository.findByUser_IdAndRule_IdAndStatus(
+                        userId,
+                        ruleId,
+                        Alert.Status.OPEN
+                );
+
         if (existing.isPresent()) {
             return new AlertOrReuse(existing.get(), false);
         }
 
         try {
-            return new AlertOrReuse(alertInsertExecutor.insertAlert(alert), true);
+            return new AlertOrReuse(
+                    alertInsertExecutor.insertAlert(alert),
+                    true
+            );
         } catch (DataIntegrityViolationException raceLoss) {
-            // A concurrent request won the race and committed an OPEN
-            // alert for the same (user_id, rule_id) between our check
-            // above and our insert attempt just now. alertInsertExecutor
-            // ran in its own REQUIRES_NEW transaction, so only that
-            // nested transaction rolled back - this (outer) transaction
-            // and its EntityManager are untouched and safe to keep using.
-            Alert reused = alertRepository.findByUser_IdAndRule_IdAndStatus(userId, ruleId, Alert.Status.OPEN)
+            Alert reused = alertRepository
+                    .findByUser_IdAndRule_IdAndStatus(
+                            userId,
+                            ruleId,
+                            Alert.Status.OPEN
+                    )
+                    .orElseThrow(() -> raceLoss);
+
+            return new AlertOrReuse(reused, false);
+        }
+    }
+    /**
+     * Deduplicates OPEN alerts for an endpoint when user_id is NULL.
+     * The database's partial unique index will enforce this invariant
+     * once the corresponding migration has been applied.
+     */
+    private AlertOrReuse createOrReuseForEndpoint(
+        Alert alert,
+        UUID endpointId,
+        UUID ruleId
+    ) {
+        Optional<Alert> existing =
+            alertRepository.findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+                endpointId,
+                ruleId,
+                Alert.Status.OPEN
+            );
+
+        if (existing.isPresent()) {
+            return new AlertOrReuse(existing.get(), false);
+        }
+
+        try {
+            return new AlertOrReuse(
+                alertInsertExecutor.insertAlert(alert),
+                true
+            );
+        } catch (DataIntegrityViolationException raceLoss) {
+            Alert reused = alertRepository
+                .findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+                    endpointId,
+                    ruleId,
+                    Alert.Status.OPEN
+                )
                 .orElseThrow(() -> raceLoss);
+
             return new AlertOrReuse(reused, false);
         }
     }
@@ -307,7 +372,8 @@ public class AlertService {
             .orElseThrow(() -> new ResourceNotFoundException("Alert not found: " + id));
         assertAlertInScope(alert, callerId);
 
-        if (alert.getStatus() != Alert.Status.RESOLVED) {
+        if (alert.getStatus() != Alert.Status.RESOLVED
+                && alert.getStatus() != Alert.Status.SUPERSEDED) {
             alert.setStatus(Alert.Status.RESOLVED);
             alert.setResolvedAt(Instant.now());
             alert = alertRepository.save(alert);

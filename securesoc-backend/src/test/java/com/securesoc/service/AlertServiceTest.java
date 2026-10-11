@@ -207,16 +207,98 @@ class AlertServiceTest {
     void createAlertFrom_endpointIdPresent_mapsEndpoint() {
         EndpointDevice endpoint = new EndpointDevice();
         endpoint.setId(endpointId);
-        when(detectionRuleRepository.findById(ruleId)).thenReturn(Optional.of(rule()));
-        when(endpointDeviceRepository.findById(endpointId)).thenReturn(Optional.of(endpoint));
+
+        when(detectionRuleRepository.findById(ruleId))
+            .thenReturn(Optional.of(rule()));
+
+        when(endpointDeviceRepository.findById(endpointId))
+            .thenReturn(Optional.of(endpoint));
+
+        when(alertRepository.findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+            endpointId, ruleId, Alert.Status.OPEN
+        )).thenReturn(Optional.empty());
+
         ArgumentCaptor<Alert> captor = ArgumentCaptor.forClass(Alert.class);
-        when(alertRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        when(alertInsertExecutor.insertAlert(captor.capture()))
+            .thenAnswer(inv -> inv.getArgument(0));
 
         alertService.createAlertFrom(detectedResult(null, endpointId));
 
         assertEquals(endpoint, captor.getValue().getEndpoint());
         verify(endpointDeviceRepository).findById(endpointId);
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
     }
+
+    @Test
+    void createAlertFrom_existingOpenAlertForSameEndpointAndRule_reusesExistingAlert() {
+        EndpointDevice endpoint = new EndpointDevice();
+        endpoint.setId(endpointId);
+
+        Alert existing = alertWithEndpoint(UUID.randomUUID(), endpointId);
+        existing.setStatus(Alert.Status.OPEN);
+
+        when(detectionRuleRepository.findById(ruleId))
+            .thenReturn(Optional.of(rule()));
+
+        when(endpointDeviceRepository.findById(endpointId))
+            .thenReturn(Optional.of(endpoint));
+
+        when(alertRepository.findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+            endpointId, ruleId, Alert.Status.OPEN
+        )).thenReturn(Optional.of(existing));
+
+        Optional<Alert> result =
+            alertService.createAlertFrom(detectedResult(null, endpointId));
+
+        assertTrue(result.isPresent());
+        assertSame(existing, result.get());
+
+        verify(alertRepository).findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+            endpointId, ruleId, Alert.Status.OPEN
+        );
+
+        verifyNoInteractions(alertInsertExecutor, alertPublisher);
+    }
+
+    @Test
+    void createAlertFrom_endpointInsertRace_reusesWinnerWithoutPublishing() {
+        EndpointDevice endpoint = new EndpointDevice();
+        endpoint.setId(endpointId);
+
+        Alert winner = alertWithEndpoint(UUID.randomUUID(), endpointId);
+
+        when(detectionRuleRepository.findById(ruleId))
+            .thenReturn(Optional.of(rule()));
+
+        when(endpointDeviceRepository.findById(endpointId))
+            .thenReturn(Optional.of(endpoint));
+
+        when(alertRepository.findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+            endpointId, ruleId, Alert.Status.OPEN
+        )).thenReturn(Optional.empty(), Optional.of(winner));
+
+        DataIntegrityViolationException original =
+            new DataIntegrityViolationException("duplicate endpoint alert");
+
+        when(alertInsertExecutor.insertAlert(any(Alert.class)))
+            .thenThrow(original);
+
+        Optional<Alert> result =
+            alertService.createAlertFrom(detectedResult(null, endpointId));
+
+        assertTrue(result.isPresent());
+        assertSame(winner, result.get());
+
+        verify(alertRepository, times(2))
+            .findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+                endpointId, ruleId, Alert.Status.OPEN
+            );
+
+        verify(alertInsertExecutor).insertAlert(any(Alert.class));
+        verifyNoInteractions(alertPublisher);
+    }
+
 
     @Test
     void createAlertFrom_endpointIdAbsent_endpointNotResolved() {
@@ -592,6 +674,25 @@ class AlertServiceTest {
         alertService.resolveAlert(alertId, callerId);
 
         verify(alertPublisher).publishAlert(any(AlertResponse.class));
+    }
+
+    @Test
+    void resolveAlert_supersededAlert_remainsSuperseded() {
+        UUID alertId = UUID.randomUUID();
+        Alert alert = new Alert();
+        alert.setId(alertId);
+        alert.setStatus(Alert.Status.SUPERSEDED);
+
+        when(alertRepository.findById(alertId))
+            .thenReturn(Optional.of(alert));
+        when(facultyScopeService.isGlobalScope(callerId))
+            .thenReturn(true);
+
+        AlertResponse result = alertService.resolveAlert(alertId, callerId);
+
+        assertEquals(Alert.Status.SUPERSEDED, alert.getStatus());
+        assertEquals("SUPERSEDED", result.status());
+        verify(alertRepository, never()).save(any(Alert.class));
     }
 
     // =====================================================================

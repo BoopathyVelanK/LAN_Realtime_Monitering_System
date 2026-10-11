@@ -216,7 +216,7 @@ class NetworkUsageDetectionIntegrationTest {
     }
 
     @Test
-    void repeatedDetections_documentCurrentEndpointDedupBehavior() throws Exception {
+    void repeatedDetections_reuseOneOpenEndpointAlert() throws Exception {
         DetectionRule rule = persistRule();
         EndpointDevice endpoint = persistEndpoint();
         Instant now = Instant.now();
@@ -225,15 +225,18 @@ class NetworkUsageDetectionIntegrationTest {
         postUsage(0L, 0L, now.plusSeconds(64));
         postUsage(0L, 0L, now.plusSeconds(128));
 
-        // Documents CURRENT behavior, not desired behavior: userId is null
-        // for endpoint telemetry, so AlertService skips deduplication and
-        // every re-detection while the window sum stays >= threshold (here,
-        // even from zero-byte samples) creates another OPEN alert and adds
-        // another 30 risk points. This test must not be "fixed" by changing
-        // dedup as part of this feature.
-        assertEquals(3, alertsFor(endpoint, rule).size());
-        assertEquals(90, riskScoreRepository.findByEndpoint_Id(endpoint.getId()).orElseThrow().getScore());
+        // Repeated detections reuse the same OPEN alert for this endpoint and rule.
+        assertEquals(1, alertsFor(endpoint, rule).size());
+
+        // Risk scoring remains independently verified for repeated detections.
+        assertEquals(
+            90,
+            riskScoreRepository.findByEndpoint_Id(endpoint.getId())
+                .orElseThrow()
+                .getScore()
+        );
     }
+
 
     @AfterEach
     void cleanUpCommittedFixtures() {

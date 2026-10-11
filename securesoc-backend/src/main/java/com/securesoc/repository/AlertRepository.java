@@ -45,4 +45,14 @@ public interface AlertRepository extends JpaRepository<Alert, UUID> {
      * skips deduplication entirely when DetectionResult.userId() is null.
      */
     Optional<Alert> findByUser_IdAndRule_IdAndStatus(UUID userId, UUID ruleId, Alert.Status status);
+
+    /**
+    * Finds an OPEN alert for an endpoint when no user is associated
+    * with the alert.
+    */
+    Optional<Alert> findByEndpoint_IdAndRule_IdAndStatusAndUserIsNull(
+        UUID endpointId,
+        UUID ruleId,
+        Alert.Status status
+    );
 }

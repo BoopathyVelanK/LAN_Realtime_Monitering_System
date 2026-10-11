@@ -126,7 +126,7 @@ class UsbEventDetectionIntegrationTest {
         assertEquals(endpoint.getId(), riskScore.getEndpoint().getId(), "RiskScore must reference the correct endpoint");
         assertEquals(30, riskScore.getScore(), "Score should be 30 for one HIGH severity detection");
 
-        // Prove that endpoint-only events (user == null) bypass deduplication
+        // Repeated endpoint-only detections should reuse the existing OPEN alert.
         for (int i = 0; i < THRESHOLD; i++) {
             mockMvc.perform(post("/monitoring/usb")
                     .servletPath("/monitoring/usb")
@@ -141,7 +141,11 @@ class UsbEventDetectionIntegrationTest {
             .filter(a -> a.getRule() != null && rule.getId().equals(a.getRule().getId()))
             .toList();
 
-        assertEquals(4, alerts.size(), "Even for the same rule and endpoint, subsequent detections create new Alerts because userId is null");
+        assertEquals(
+            1,
+            alerts.size(),
+            "Repeated detections for the same endpoint and rule must reuse one OPEN alert"
+        );
 
         riskScoreOpt = riskScoreRepository.findByEndpoint_Id(endpoint.getId());
         assertEquals(100, riskScoreOpt.get().getScore(), "RiskScore should accumulate 30 * 4 = 120, clamped to 100");
