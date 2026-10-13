@@ -40,6 +40,8 @@ import com.securesoc.repository.UsbEventRepository;
 import com.securesoc.repository.UserRepository;
 import com.securesoc.repository.VpnEventRepository;
 import com.securesoc.security.TokenHasher;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,11 +57,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.security.SecureRandom;
 import java.util.HashSet;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 
@@ -82,22 +86,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * per endpoint, one OPEN alert with no endpoint, and one risk score per
  * endpoint.
  *
- * Container lifecycle: a SINGLETON container started in a static
- * initializer (not {@code @Container}). Spring's context cache key does not
- * include the DynamicPropertySource's resolved values, so with a per-class
- * {@code @Container} the second subclass would reuse a cached context still
- * pointing at the first class's stopped container. One shared container
- * keeps every subclass on the same context and the same database
- * (Testcontainers' Ryuk reaps it at JVM exit).
+ * Container lifecycle: uses the suite-wide {@link SharedPostgresContainer}
+ * (not {@code @Container}). Spring's context cache outlives a test class, and
+ * its key does not include the DynamicPropertySource's resolved values, so
+ * with a per-class {@code @Container} a cached context would keep pointing
+ * at a stopped container. See SharedPostgresContainer for the full contract
+ * (Ryuk reaps the container at JVM exit).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 abstract class AbstractRbacIntegrationTest {
 
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:15-alpine");
-
-    static {
-        POSTGRES.start();
-    }
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -122,6 +121,8 @@ abstract class AbstractRbacIntegrationTest {
     @Autowired protected EndpointDeviceRepository endpointDeviceRepository;
     @Autowired protected DetectionRuleRepository detectionRuleRepository;
     @Autowired protected AlertRepository alertRepository;
+    @Autowired private PlatformTransactionManager transactionManager;
+    @PersistenceContext private EntityManager entityManager;
     @Autowired protected RiskScoreRepository riskScoreRepository;
     @Autowired protected LoginEventRepository loginEventRepository;
     @Autowired protected LogoutEventRepository logoutEventRepository;
@@ -131,6 +132,16 @@ abstract class AbstractRbacIntegrationTest {
     @Autowired protected NetworkUsageEventRepository networkUsageEventRepository;
     @Autowired protected InternetUsageEventRepository internetUsageEventRepository;
     @Autowired protected RunningAppSnapshotRepository runningAppSnapshotRepository;
+
+    // Ids of every row this fixture creates. Cleanup deletes exactly these (and
+    // rows that reference them) - the database is shared by the whole suite, so
+    // nothing here may delete rows it does not own.
+    private final Set<UUID> createdUserIds = new LinkedHashSet<>();
+    private final Set<UUID> createdDepartmentIds = new LinkedHashSet<>();
+    private final Set<UUID> createdLabIds = new LinkedHashSet<>();
+    private final Set<UUID> createdAssignmentIds = new LinkedHashSet<>();
+    private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
+    private final Set<UUID> createdRuleIds = new LinkedHashSet<>();
 
     protected Department deptA;
     protected Department deptB;
@@ -174,7 +185,7 @@ abstract class AbstractRbacIntegrationTest {
         FacultyAssignment assignment = new FacultyAssignment();
         assignment.setFacultyUser(facultyF);
         assignment.setLaboratory(labA);
-        facultyAssignmentRepository.save(assignment);
+        createdAssignmentIds.add(facultyAssignmentRepository.save(assignment).getId());
 
         agentTokenA = TokenHasher.generateOpaqueToken();
         endpointA = persistEndpoint(labA, "RBAC-EP-A", TokenHasher.sha256Hex(agentTokenA));
@@ -187,6 +198,7 @@ abstract class AbstractRbacIntegrationTest {
         rule.setSeverity(DetectionRule.Severity.HIGH);
         rule.setEnabled(true);
         rule = detectionRuleRepository.save(rule);
+        createdRuleIds.add(rule.getId());
 
         alertA = persistAlert(endpointA, "Alert A");
         alertB = persistAlert(endpointB, "Alert B");
@@ -203,27 +215,57 @@ abstract class AbstractRbacIntegrationTest {
         facultyZToken = login("rbac_faculty_z");
     }
 
+    /**
+     * Fixture-scoped cleanup (the container is shared with every other
+     * integration test, so no table is ever wiped wholesale), run in one
+     * transaction. Everything is deleted by tracked id or by a foreign-key id
+     * (see {@link FixtureCleanup}); no entity is loaded and no lazy association
+     * is navigated.
+     *
+     * Order respects the foreign keys: alerts and auth-failure events first
+     * (alerts.endpoint_id/rule_id and auth_failure_events.user_id are
+     * ON DELETE SET NULL, so deleting their targets first would orphan them),
+     * then risk scores and monitoring rows, endpoints, faculty assignments,
+     * labs, departments, the rule, and finally the users. Rows created during
+     * a test through the API (alerts, monitoring rows, failed-login events)
+     * are covered because they reference fixture endpoints/rules/users. The
+     * Flyway-seeded ADMIN/FACULTY roles and the seeded admin account are
+     * never touched.
+     */
     @AfterEach
     void cleanupRbacFixture() {
-        // FK order: children first. Only rows this fixture can have created
-        // are removed; the Flyway-seeded ADMIN/FACULTY roles are shared and
-        // deliberately untouched.
-        runningAppSnapshotRepository.deleteAll(); // cascades to running_apps
-        loginEventRepository.deleteAll();
-        logoutEventRepository.deleteAll();
-        usbEventRepository.deleteAll();
-        vpnEventRepository.deleteAll();
-        idleEventRepository.deleteAll();
-        networkUsageEventRepository.deleteAll();
-        internetUsageEventRepository.deleteAll();
-        alertRepository.deleteAll();
-        riskScoreRepository.deleteAll();
-        endpointDeviceRepository.deleteAll();
-        facultyAssignmentRepository.deleteAll();
-        laboratoryRepository.deleteAll();
-        departmentRepository.deleteAll();
-        detectionRuleRepository.delete(rule);
-        userRepository.deleteAll(List.of(adminUser, facultyF, facultyZ));
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            FixtureCleanup.deleteAlertsReferencing(entityManager, createdEndpointIds, createdRuleIds, createdUserIds);
+            FixtureCleanup.deleteAuthFailureEventsOf(entityManager, createdUserIds);
+
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, RiskScore.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, RunningAppSnapshot.class, createdEndpointIds); // DB cascades to running_apps
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, LoginEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, LogoutEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, UsbEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, VpnEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, IdleEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, NetworkUsageEvent.class, createdEndpointIds);
+            FixtureCleanup.deleteOwnedByEndpoints(entityManager, InternetUsageEvent.class, createdEndpointIds);
+
+            createdEndpointIds.forEach(endpointDeviceRepository::deleteById);
+            entityManager.flush();
+            createdAssignmentIds.forEach(facultyAssignmentRepository::deleteById);
+            entityManager.flush();
+            createdLabIds.forEach(laboratoryRepository::deleteById);
+            entityManager.flush();
+            createdDepartmentIds.forEach(departmentRepository::deleteById);
+            createdRuleIds.forEach(detectionRuleRepository::deleteById);
+            entityManager.flush();
+            createdUserIds.forEach(userRepository::deleteById);
+        });
+
+        createdEndpointIds.clear();
+        createdAssignmentIds.clear();
+        createdLabIds.clear();
+        createdDepartmentIds.clear();
+        createdRuleIds.clear();
+        createdUserIds.clear();
     }
 
     // ===================================================================
@@ -307,14 +349,18 @@ abstract class AbstractRbacIntegrationTest {
         user.setPasswordHash(passwordHash);
         user.setFullName(username);
         user.getRoles().add(role);
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+        createdUserIds.add(saved.getId());
+        return saved;
     }
 
     private Department persistDepartment(String name, String codePrefix) {
         Department department = new Department();
         department.setName(name);
         department.setCode(codePrefix + shortId());
-        return departmentRepository.save(department);
+        Department saved = departmentRepository.save(department);
+        createdDepartmentIds.add(saved.getId());
+        return saved;
     }
 
     private Laboratory persistLab(String name, String codePrefix, Department department) {
@@ -322,7 +368,9 @@ abstract class AbstractRbacIntegrationTest {
         lab.setName(name);
         lab.setCode(codePrefix + shortId());
         lab.setDepartment(department);
-        return laboratoryRepository.save(lab);
+        Laboratory saved = laboratoryRepository.save(lab);
+        createdLabIds.add(saved.getId());
+        return saved;
     }
 
     private EndpointDevice persistEndpoint(Laboratory lab, String hostnamePrefix, String agentTokenHash) {
@@ -331,7 +379,9 @@ abstract class AbstractRbacIntegrationTest {
         endpoint.setMacAddress(randomMacAddress());
         endpoint.setAgentTokenHash(agentTokenHash);
         endpoint.setLab(lab);
-        return endpointDeviceRepository.save(endpoint);
+        EndpointDevice saved = endpointDeviceRepository.save(endpoint);
+        createdEndpointIds.add(saved.getId());
+        return saved;
     }
 
     private Alert persistAlert(EndpointDevice endpoint, String title) {

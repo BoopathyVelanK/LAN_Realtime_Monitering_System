@@ -19,8 +19,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
 import java.util.LinkedHashSet;
@@ -87,12 +85,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * future schema change that resolves it will fail this test loudly instead
  * of the gap going unnoticed again.
  */
-@Testcontainers
 @SpringBootTest
 class AuthFailureDetectionIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void registerDatasourceProperties(DynamicPropertyRegistry registry) {

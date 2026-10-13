@@ -31,11 +31,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,12 +65,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * this one only covers the REST/RBAC surface on top of an
  * already-persisted row, per the RiskScoreController milestone scope.
  */
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RiskScoreLifecycleIntegrationTest {
 
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static final PostgreSQLContainer<?> postgres = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -98,6 +96,13 @@ class RiskScoreLifecycleIntegrationTest {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    // Ids of the rows setup() creates; cleanup removes exactly these (the database is
+    // shared by the whole suite, so no table is wiped wholesale).
+    private final Set<UUID> createdUserIds = new LinkedHashSet<>();
+    private final Set<UUID> createdLabIds = new LinkedHashSet<>();
+    private final Set<UUID> createdAssignmentIds = new LinkedHashSet<>();
+    private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
+
     private EndpointDevice inScopeEndpoint;
     private EndpointDevice outOfScopeEndpoint;
     private String adminToken;
@@ -114,7 +119,7 @@ class RiskScoreLifecycleIntegrationTest {
         adminUser.setPasswordHash(passwordEncoder.encode("password"));
         adminUser.setFullName("Risk Admin Tester");
         adminUser.getRoles().add(adminRole);
-        userRepository.save(adminUser);
+        createdUserIds.add(userRepository.save(adminUser).getId());
 
         User facultyUser = new User();
         facultyUser.setUsername("risk_faculty_tester");
@@ -122,22 +127,22 @@ class RiskScoreLifecycleIntegrationTest {
         facultyUser.setPasswordHash(passwordEncoder.encode("password"));
         facultyUser.setFullName("Risk Faculty Tester");
         facultyUser.getRoles().add(facultyRole);
-        userRepository.save(facultyUser);
+        createdUserIds.add(userRepository.save(facultyUser).getId());
 
         Laboratory assignedLab = new Laboratory();
         assignedLab.setName("Risk Test Lab - Assigned");
         assignedLab.setCode("RSK-A-" + UUID.randomUUID().toString().substring(0, 8));
-        laboratoryRepository.save(assignedLab);
+        createdLabIds.add(laboratoryRepository.save(assignedLab).getId());
 
         Laboratory otherLab = new Laboratory();
         otherLab.setName("Risk Test Lab - Other");
         otherLab.setCode("RSK-B-" + UUID.randomUUID().toString().substring(0, 8));
-        laboratoryRepository.save(otherLab);
+        createdLabIds.add(laboratoryRepository.save(otherLab).getId());
 
         FacultyAssignment assignment = new FacultyAssignment();
         assignment.setFacultyUser(facultyUser);
         assignment.setLaboratory(assignedLab);
-        facultyAssignmentRepository.save(assignment);
+        createdAssignmentIds.add(facultyAssignmentRepository.save(assignment).getId());
 
         inScopeEndpoint = persistEndpoint(assignedLab, "RISK-IT-IN-SCOPE");
         outOfScopeEndpoint = persistEndpoint(otherLab, "RISK-IT-OUT-OF-SCOPE");
@@ -151,13 +156,19 @@ class RiskScoreLifecycleIntegrationTest {
 
     @AfterEach
     void cleanup() {
-        riskScoreRepository.deleteAll();
-        endpointDeviceRepository.deleteAll();
-        facultyAssignmentRepository.deleteAll();
-        laboratoryRepository.deleteAll();
-        userRepository.deleteAll();
-        // roleRepository is deliberately untouched: ADMIN/FACULTY are the
-        // shared, Flyway-seeded rows (see setup()), not rows this test owns.
+        // FK order: risk scores -> endpoints -> faculty assignments -> labs -> users.
+        // Only rows created by setup() are removed; the Flyway-seeded ADMIN/FACULTY roles
+        // and the seeded admin account are untouched.
+        createdEndpointIds.forEach(endpointId ->
+            riskScoreRepository.findByEndpoint_Id(endpointId).ifPresent(riskScoreRepository::delete));
+        createdEndpointIds.forEach(endpointDeviceRepository::deleteById);
+        createdAssignmentIds.forEach(facultyAssignmentRepository::deleteById);
+        createdLabIds.forEach(laboratoryRepository::deleteById);
+        createdUserIds.forEach(userRepository::deleteById);
+        createdEndpointIds.clear();
+        createdAssignmentIds.clear();
+        createdLabIds.clear();
+        createdUserIds.clear();
     }
 
     @Test
@@ -268,7 +279,9 @@ class RiskScoreLifecycleIntegrationTest {
         endpoint.setMacAddress(randomMacAddress());
         endpoint.setAgentTokenHash(randomHex(64));
         endpoint.setLab(lab);
-        return endpointDeviceRepository.save(endpoint);
+        EndpointDevice saved = endpointDeviceRepository.save(endpoint);
+        createdEndpointIds.add(saved.getId());
+        return saved;
     }
 
     private RiskScore persistRiskScore(EndpointDevice endpoint, short score, RiskScore.Level level) {

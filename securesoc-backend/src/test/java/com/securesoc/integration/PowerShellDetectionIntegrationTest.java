@@ -21,8 +21,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
 import java.util.LinkedHashSet;
@@ -63,13 +61,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * commandLine itself is read only through fresh repository queries, never
  * by dereferencing a detached RunningAppSnapshot.getApps().
  */
-@Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
 class PowerShellDetectionIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void registerDatasourceProperties(DynamicPropertyRegistry registry) {

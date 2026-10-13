@@ -10,6 +10,8 @@ import com.securesoc.entity.User;
 import com.securesoc.repository.AlertRepository;
 import com.securesoc.repository.DetectionRuleRepository;
 import com.securesoc.repository.UserRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,20 +27,21 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public class AlertLifecycleIntegrationTest {
 
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static final PostgreSQLContainer<?> postgres = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
@@ -65,9 +68,20 @@ public class AlertLifecycleIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private User testUser;
     private String jwtToken;
     private Alert testAlert;
+
+    // Ids of the rows setup() creates; cleanup removes exactly these (the database is
+    // shared by the whole suite, so no table is wiped wholesale).
+    private final Set<UUID> createdUserIds = new LinkedHashSet<>();
+    private final Set<UUID> createdRuleIds = new LinkedHashSet<>();
 
     @BeforeEach
     void setup() {
@@ -85,6 +99,7 @@ public class AlertLifecycleIntegrationTest {
         testUser.getRoles().add(adminRole);
 
         testUser = userRepository.save(testUser);
+        createdUserIds.add(testUser.getId());
 
         DetectionRule rule = new DetectionRule();
         rule.setName("Test Rule");
@@ -93,6 +108,7 @@ public class AlertLifecycleIntegrationTest {
         rule.setSeverity(DetectionRule.Severity.HIGH);
         rule.setEnabled(true);
         rule = ruleRepository.save(rule);
+        createdRuleIds.add(rule.getId());
 
         testAlert = new Alert();
         testAlert.setRule(rule);
@@ -111,13 +127,19 @@ public class AlertLifecycleIntegrationTest {
 
     @AfterEach
     void cleanup() {
-        alertRepository.deleteAll();
-        ruleRepository.deleteAll();
-        userRepository.deleteAll();
-        // roleRepository.deleteAll() removed: ADMIN is now the shared,
-        // Flyway-seeded row (see setup()), not a row this test owns -
-        // deleting it here would break whichever @Test method in this
-        // class runs second.
+        // Alerts first (alerts.rule_id is ON DELETE SET NULL, so deleting the rule first
+        // would orphan them), auth-failure events before their user (auth_failure_events.user_id
+        // is ON DELETE SET NULL), then the user and rule. Everything is deleted by this test's
+        // own ids/foreign keys - no entity is loaded, no lazy association is navigated, and the
+        // Flyway-seeded roles and admin account are untouched.
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            FixtureCleanup.deleteAlertsReferencing(entityManager, Set.of(), createdRuleIds, createdUserIds);
+            FixtureCleanup.deleteAuthFailureEventsOf(entityManager, createdUserIds);
+            createdUserIds.forEach(userRepository::deleteById);
+            createdRuleIds.forEach(ruleRepository::deleteById);
+        });
+        createdUserIds.clear();
+        createdRuleIds.clear();
     }
 
     @Test

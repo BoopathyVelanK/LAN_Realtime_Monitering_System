@@ -12,6 +12,7 @@ import com.securesoc.repository.UserRepository;
 import com.securesoc.service.AlertService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,12 +22,12 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,30 +43,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * repositories, and Flyway's actual V1-V15 migrations - against a real
  * PostgreSQL instance, not H2 and not a developer's local database.
  *
- * The PostgreSQL instance is an ephemeral Testcontainers container: a
- * fresh image is pulled/started for this test class only, torn down
- * automatically afterward, and never shares state with
+ * The PostgreSQL instance is the suite-wide ephemeral Testcontainers
+ * container ({@link SharedPostgresContainer}); it never shares state with
  * docker-compose.yml's "securesoc-postgres" container or any other
  * database. No database name, host, or port is hardcoded or must be
  * created by hand - Testcontainers assigns a random port on an
  * auto-created database inside the container, and {@link DynamicPropertySource}
  * wires that address into the Spring context before it starts.
  *
- * Test data is cleaned up via each test method's own transaction rollback
- * (see {@code @Transactional} below - Spring gives each @Test its own
- * transaction/rollback under a class-level @Transactional) in addition to
- * the container itself being destroyed after the test class - nothing
- * here persists beyond this run.
+ * Test data is cleaned up in two layers: uncommitted work is undone by each
+ * test method's own transaction rollback (class-level @Transactional), and
+ * every row committed via {@code commitFixtures()} is tracked by id and
+ * deleted in {@code cleanUpCommittedFixtures()}. The container is shared
+ * with other test classes, so nothing may be left behind - in particular
+ * the enabled AUTH_FAILURE rules this class creates would otherwise be
+ * evaluated by every later class's detection runs.
  */
-@Testcontainers
 @SpringBootTest
 @Transactional
 class AlertPersistenceIntegrationTest {
 
     // Same base image docker-compose.yml uses for local dev, so behavior
     // (extensions, defaults) matches production as closely as possible.
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void registerDatasourceProperties(DynamicPropertyRegistry registry) {
@@ -93,6 +93,61 @@ class AlertPersistenceIntegrationTest {
     private EntityManager entityManager;
 
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final Set<UUID> createdRuleIds = new LinkedHashSet<>();
+    private final Set<UUID> createdUserIds = new LinkedHashSet<>();
+    private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
+
+    /**
+     * Deletes every row this class committed (see {@code commitFixtures()}).
+     * Alerts are removed first (they reference the rule/user/endpoint), then
+     * the endpoints, users and rules themselves.
+     *
+     * Interaction with Spring's test-managed transaction: this class is
+     * {@code @Transactional}, and {@code @AfterEach} runs while the current test
+     * transaction is still open. That transaction can only hold work that was
+     * never committed - committed fixtures went through {@code commitFixtures()},
+     * which commits and immediately opens a fresh transaction. After a
+     * deliberate constraint violation (the unique-index tests) PostgreSQL has
+     * also aborted it, so it can't be reused for the deletes. It is therefore
+     * rolled back first (exactly what Spring would do at the end of the test
+     * anyway), and the deletes run in their own transaction that is committed
+     * on success. Ids tracked for rows that were only ever flushed (and so were
+     * rolled back) are harmless: {@code deleteById} ignores missing rows.
+     * If a delete fails, that transaction is rolled back (not left open for the
+     * next test) and the failure propagates.
+     */
+    @AfterEach
+    void cleanUpCommittedFixtures() {
+        if (TestTransaction.isActive()) {
+            TestTransaction.flagForRollback();
+            TestTransaction.end();
+        }
+        TestTransaction.start();
+        try {
+            // Bulk delete by foreign-key id: no alert is loaded, so no detached lazy
+            // association is touched. Alerts go first (alerts.endpoint_id/rule_id are
+            // ON DELETE SET NULL, so deleting those rows first would orphan them).
+            FixtureCleanup.deleteAlertsReferencing(entityManager, createdEndpointIds, createdRuleIds, createdUserIds);
+
+            createdEndpointIds.forEach(endpointDeviceRepository::deleteById);
+            endpointDeviceRepository.flush();
+
+            createdUserIds.forEach(userRepository::deleteById);
+            userRepository.flush();
+
+            createdRuleIds.forEach(detectionRuleRepository::deleteById);
+            detectionRuleRepository.flush();
+
+            TestTransaction.flagForCommit();
+        } finally {
+            // Commits when flagged above, otherwise rolls back (cleanup failed).
+            TestTransaction.end();
+            createdRuleIds.clear();
+            createdUserIds.clear();
+            createdEndpointIds.clear();
+        }
+    }
 
     @Test
     void detectedResult_flowsThroughAlertServiceAndIsPersistedToPostgres() {
@@ -443,13 +498,10 @@ void acknowledgedEndpointAlert_allowsNewOpenAlert() {
      * other transaction.
      *
      * Any row committed here is not covered by this test method's own
-     * final rollback and persists for the lifetime of the shared
-     * Testcontainers instance (torn down once the whole test class
-     * finishes). That's acceptable: every fixture here uses a fresh random
-     * UUID/name per test (see persistRule/persistUser/persistEndpoint), so
-     * there's no cross-test collision, and no assertion in this class
-     * depends on total row counts - only on rows scoped to a specific
-     * user/rule id.
+     * final rollback. Every fixture uses a fresh random UUID/name per test
+     * (see persistRule/persistUser/persistEndpoint) and its id is tracked so
+     * {@link #cleanUpCommittedFixtures()} can delete it - the database is
+     * shared by the whole suite and is not destroyed after this class.
      */
     private void commitFixtures() {
         TestTransaction.flagForCommit();
@@ -499,7 +551,9 @@ void acknowledgedEndpointAlert_allowsNewOpenAlert() {
         rule.setWindowSeconds(300);
         rule.setSeverity(DetectionRule.Severity.HIGH);
         rule.setEnabled(true);
-        return detectionRuleRepository.save(rule);
+        DetectionRule saved = detectionRuleRepository.save(rule);
+        createdRuleIds.add(saved.getId());
+        return saved;
     }
 
     private User persistUser() {
@@ -509,7 +563,9 @@ void acknowledgedEndpointAlert_allowsNewOpenAlert() {
         user.setEmail("it-user-" + suffix + "@example.invalid");
         user.setPasswordHash("integration-test-placeholder-hash");
         user.setFullName("Integration Test User");
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+        createdUserIds.add(saved.getId());
+        return saved;
     }
 
     private EndpointDevice persistEndpoint() {
@@ -517,7 +573,9 @@ void acknowledgedEndpointAlert_allowsNewOpenAlert() {
         endpoint.setHostname("IT-ENDPOINT-" + UUID.randomUUID());
         endpoint.setMacAddress(randomMacAddress());
         endpoint.setAgentTokenHash(randomHex(64));
-        return endpointDeviceRepository.save(endpoint);
+        EndpointDevice saved = endpointDeviceRepository.save(endpoint);
+        createdEndpointIds.add(saved.getId());
+        return saved;
     }
 
     /** endpoint_devices.mac_address is VARCHAR(17) UNIQUE NOT NULL, formatted

@@ -22,8 +22,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -49,13 +47,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * DetectionEvaluationExecutor's REQUIRES_NEW boundary and
  * MonitoringService's try/catch all run for real.
  */
-@Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
 class NetworkUsageDetectionFailureIsolationIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void registerDatasourceProperties(DynamicPropertyRegistry registry) {

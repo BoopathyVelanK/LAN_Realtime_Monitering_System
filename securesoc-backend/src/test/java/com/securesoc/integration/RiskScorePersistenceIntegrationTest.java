@@ -24,8 +24,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.transaction.TestTransaction;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -58,15 +56,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the production wiring added in Checkpoint B, not just RiskScoreService in
  * isolation (already covered by RiskScoreServiceTest's unit tests).
  */
-@Testcontainers
 @SpringBootTest
 @Transactional
 class RiskScorePersistenceIntegrationTest {
 
     // Same base image docker-compose.yml uses for local dev, so behavior
     // (extensions, defaults) matches production as closely as possible.
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final PostgreSQLContainer<?> POSTGRES = SharedPostgresContainer.INSTANCE;
 
     @DynamicPropertySource
     static void registerDatasourceProperties(DynamicPropertyRegistry registry) {
