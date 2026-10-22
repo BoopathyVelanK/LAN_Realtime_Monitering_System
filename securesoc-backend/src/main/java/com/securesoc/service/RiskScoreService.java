@@ -11,6 +11,7 @@ import com.securesoc.repository.RiskScoreRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.Instant;
 
 import java.util.List;
 import java.util.Optional;
@@ -136,15 +137,21 @@ public class RiskScoreService {
         RiskScore riskScore = riskScoreRepository.findByEndpoint_Id(result.endpointId())
             .orElseGet(() -> newRiskScoreFor(result.endpointId()));
 
-        int updatedScore = clamp(riskScore.getScore() + pointsFor(result.severity()));
+        int updatedScore = clamp(
+            riskScore.getScore() + pointsFor(result.severity())
+        );
+
         riskScore.setScore((short) updatedScore);
         riskScore.setLevel(levelFor(updatedScore));
 
+        // Refresh timestamp for every valid detection, even at score 100.
+        riskScore.setUpdatedAt(Instant.now());
+
         RiskScore saved = riskScoreRepository.save(riskScore);
         riskPublisher.publishRiskScore(toResponse(saved));
+
         return Optional.of(saved);
     }
-
     /**
      * Returns every persisted {@link RiskScore}, ordered by score descending
      * (highest-risk endpoints first) - backs {@code GET /risk-scores}.

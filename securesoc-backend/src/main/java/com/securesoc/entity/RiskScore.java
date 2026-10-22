@@ -43,4 +43,8 @@ public class RiskScore {
     void onUpdate() {
         this.updatedAt = Instant.now();
     }
+    
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 }

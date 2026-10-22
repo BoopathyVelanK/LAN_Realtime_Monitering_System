@@ -19,6 +19,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -243,6 +247,33 @@ class RiskScoreServiceTest {
 
         assertTrue(result.isPresent());
         assertEquals((short) 100, result.get().getScore());
+    }
+
+    @Test
+    void recordDetection_scoreAlreadyAtMax_stillRefreshesUpdatedAt() {
+        RiskScore existing = riskScoreWith((short) 100, RiskScore.Level.CRITICAL);
+        Instant previousUpdatedAt = Instant.parse("2026-10-01T00:00:00Z");
+        existing.setUpdatedAt(previousUpdatedAt);
+
+        when(riskScoreRepository.findByEndpoint_Id(endpointId))
+            .thenReturn(Optional.of(existing));
+        when(riskScoreRepository.save(any(RiskScore.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+
+        Optional<RiskScore> result = riskScoreService.recordDetection(
+            detectedResult(DetectionRule.Severity.MEDIUM, endpointId));
+
+        assertTrue(result.isPresent());
+        assertEquals((short) 100, result.get().getScore());
+        assertEquals(RiskScore.Level.CRITICAL, result.get().getLevel());
+        assertNotNull(result.get().getUpdatedAt());
+        assertTrue(
+            result.get().getUpdatedAt().isAfter(previousUpdatedAt),
+            "updatedAt should refresh even when the score is already capped at 100"
+        );
+
+        verify(riskScoreRepository).save(existing);
+        verify(riskPublisher).publishRiskScore(any(RiskScoreResponse.class));
     }
 
     // =====================================================================
