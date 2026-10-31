@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.user.SimpSession;
 import org.springframework.messaging.simp.user.SimpUser;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -60,6 +62,7 @@ class RbacWebSocketIntegrationTest extends AbstractRbacIntegrationTest {
     @Autowired private WebSocketAlertEventPublisher alertPublisher;
     @Autowired private WebSocketRiskEventPublisher riskPublisher;
     @Autowired private EndpointEventPublisher endpointEventPublisher;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     private final List<RbacStompTestClient> opened = new ArrayList<>();
 
@@ -197,6 +200,38 @@ class RbacWebSocketIntegrationTest extends AbstractRbacIntegrationTest {
         assertFalse(f.received(STATUS).toString().contains(labB.getName()));
 
         awaitExactly(z.received(STATUS), 0);
+    }
+
+    @Test
+    void endpointStatus_isDeliveredOnlyAfterTransactionCommits() throws Exception {
+        RbacStompTestClient admin = connectAndSubscribe(adminToken, "rbac_admin");
+
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+        transactionTemplate.executeWithoutResult(status ->
+                endpointEventPublisher.publishStatusChange(endpointA)
+        );
+
+        awaitExactly(admin.received(STATUS), 1);
+
+        assertEquals(
+                endpointA.getId().toString(),
+                admin.received(STATUS).get(0).get("endpointId").asText()
+        );
+    }
+
+    @Test
+    void endpointStatus_isNotDeliveredWhenTransactionRollsBack() throws Exception {
+        RbacStompTestClient admin = connectAndSubscribe(adminToken, "rbac_admin");
+
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+        transactionTemplate.executeWithoutResult(status -> {
+            endpointEventPublisher.publishStatusChange(endpointA);
+            status.setRollbackOnly();
+        });
+
+        awaitExactly(admin.received(STATUS), 0);
     }
 
     /** The retired shared broadcast topics must stay dead: a Faculty client

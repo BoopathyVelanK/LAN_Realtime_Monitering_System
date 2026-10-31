@@ -2,6 +2,7 @@ package com.securesoc.service;
 
 import com.securesoc.entity.User;
 import com.securesoc.repository.UserRepository;
+import com.securesoc.security.SecurityUserDetails;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpUser;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
@@ -79,10 +80,19 @@ class ScopedWebSocketDelivery {
     }
 
     private boolean isEligible(User user, UUID endpointId) {
+        SecurityUserDetails userDetails = new SecurityUserDetails(user);
+
+        if (!userDetails.isEnabled() || !userDetails.isAccountNonLocked()) {
+            return false;
+        }
+
         UUID userId = user.getId();
+
         if (facultyScopeService.isGlobalScope(userId)) {
             return true;
         }
-        return endpointId != null && facultyScopeService.canAccessEndpoint(userId, endpointId);
+
+        return endpointId != null
+                && facultyScopeService.canAccessEndpoint(userId, endpointId);
     }
 }

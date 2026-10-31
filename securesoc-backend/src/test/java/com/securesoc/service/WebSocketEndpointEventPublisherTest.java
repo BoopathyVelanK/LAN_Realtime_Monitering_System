@@ -7,6 +7,8 @@ import com.securesoc.entity.Laboratory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -16,9 +18,12 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 /**
  * No test file previously existed for WebSocketEndpointEventPublisher.
@@ -68,6 +73,61 @@ class WebSocketEndpointEventPublisherTest {
         assertEquals("ONLINE", event.status());
         assertEquals(device.getLastHeartbeatAt(), event.lastHeartbeatAt());
         assertEquals("Lab 1", event.labName());
+    }
+
+    @Test
+    void publishStatusChange_defersDeliveryUntilTransactionCommits() {
+        UUID endpointId = UUID.randomUUID();
+        EndpointDevice device = new EndpointDevice();
+        device.setId(endpointId);
+        device.setHostname("LAB-PC-03");
+        device.setStatus(EndpointDevice.Status.ONLINE);
+
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            publisher.publishStatusChange(device);
+
+            verify(scopedDelivery, never()).deliverToAuthorizedUsers(any(), any(), any());
+            assertTrue(TransactionSynchronizationManager.isSynchronizationActive());
+
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCommit();
+            }
+
+            verify(scopedDelivery).deliverToAuthorizedUsers(
+                eq("/queue/endpoints/status"),
+                any(EndpointStatusEvent.class),
+                eq(endpointId)
+            );
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+    }
+
+    @Test
+    void publishStatusChange_isNotDeliveredWhenTransactionRollsBack() {
+        UUID endpointId = UUID.randomUUID();
+        EndpointDevice device = new EndpointDevice();
+        device.setId(endpointId);
+        device.setHostname("LAB-PC-04");
+        device.setStatus(EndpointDevice.Status.OFFLINE);
+
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            publisher.publishStatusChange(device);
+
+            // A rollback does not invoke afterCommit(), so no delivery occurs.
+            assertFalse(TransactionSynchronizationManager.getSynchronizations().isEmpty());
+            verify(scopedDelivery, never()).deliverToAuthorizedUsers(any(), any(), any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+
+        verify(scopedDelivery, never()).deliverToAuthorizedUsers(any(), any(), any());
     }
 
     @Test

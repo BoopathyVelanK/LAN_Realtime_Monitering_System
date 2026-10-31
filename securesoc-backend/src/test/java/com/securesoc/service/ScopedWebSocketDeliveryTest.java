@@ -11,6 +11,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpUser;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -156,6 +157,62 @@ class ScopedWebSocketDeliveryTest {
         delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
 
         verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any());
+    }
+
+    @Test
+    void disabledAdmin_doesNotReceiveEventsEvenWithGlobalScope() {
+        SimpUser admin = connected("admin1");
+        User disabledAdmin = userEntity(adminId);
+        disabledAdmin.setEnabled(false);
+        when(userRegistry.getUsers()).thenReturn(Set.of(admin));
+        when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(disabledAdmin));
+
+        delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
+
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any());
+        verifyNoInteractions(facultyScopeService);
+    }
+
+    @Test
+    void lockedAdmin_doesNotReceiveEventsEvenWithGlobalScope() {
+        SimpUser admin = connected("admin1");
+        User lockedAdmin = userEntity(adminId);
+        lockedAdmin.setLockedUntil(Instant.now().plusSeconds(3600));
+        when(userRegistry.getUsers()).thenReturn(Set.of(admin));
+        when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(lockedAdmin));
+
+        delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
+
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any());
+        verifyNoInteractions(facultyScopeService);
+    }
+
+    @Test
+    void disabledFaculty_doesNotReceiveEventsEvenForAssignedEndpoint() {
+        SimpUser faculty = connected("facultyA");
+        User disabledFaculty = userEntity(facultyAId);
+        disabledFaculty.setEnabled(false);
+        when(userRegistry.getUsers()).thenReturn(Set.of(faculty));
+        when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(disabledFaculty));
+
+        delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
+
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any());
+        verifyNoInteractions(facultyScopeService);
+    }
+
+    @Test
+    void lockedFaculty_doesNotReceiveEventsEvenForAssignedEndpoint() {
+        SimpUser faculty = connected("facultyA");
+        User lockedFaculty = userEntity(facultyAId);
+        lockedFaculty.setLockedUntil(Instant.now().plusSeconds(3600));
+        when(userRegistry.getUsers()).thenReturn(Set.of(faculty));
+        when(userRepository.findByUsername("facultyA")).thenReturn(Optional.of(lockedFaculty));
+
+        delivery.deliverToAuthorizedUsers(DESTINATION, new Object(), endpointInLabA);
+
+        verify(messagingTemplate, never()).convertAndSendToUser(any(), any(), any());
+        verifyNoInteractions(facultyScopeService);
     }
 
     @Test

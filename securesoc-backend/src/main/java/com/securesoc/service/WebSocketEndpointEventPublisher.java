@@ -3,6 +3,8 @@ package com.securesoc.service;
 import com.securesoc.dto.EndpointStatusEvent;
 import com.securesoc.entity.EndpointDevice;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * The only class in the codebase that knows the WebSocket destination name
@@ -33,6 +35,20 @@ public class WebSocketEndpointEventPublisher implements EndpointEventPublisher {
             device.getLastHeartbeatAt(),
             device.getLab() != null ? device.getLab().getName() : null
         );
-        scopedDelivery.deliverToAuthorizedUsers(ENDPOINT_STATUS_DESTINATION, event, device.getId());
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+        && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    scopedDelivery.deliverToAuthorizedUsers(
+                        ENDPOINT_STATUS_DESTINATION,
+                        event,
+                        device.getId()
+                    );
+                }
+            });
+        } else {
+            scopedDelivery.deliverToAuthorizedUsers(ENDPOINT_STATUS_DESTINATION, event, device.getId());
+        }
     }
 }
