@@ -82,16 +82,6 @@ public class AgentService {
         device.setAgentVersion(request.agentVersion());
         device.setStatus(EndpointDevice.Status.OFFLINE); // becomes ONLINE on first heartbeat
 
-        if (request.labId() != null && !request.labId().isBlank()) {
-            try {
-                UUID labId = UUID.fromString(request.labId());
-                laboratoryRepository.findById(labId).ifPresent(device::setLab);
-            } catch (IllegalArgumentException ignored) {
-                // Not a valid UUID (or unassigned) - device stays unassigned;
-                // an admin can assign it a lab later from the Inventory page.
-            }
-        }
-
         String rawToken = TokenHasher.generateOpaqueToken();
         device.setAgentTokenHash(TokenHasher.sha256Hex(rawToken));
 

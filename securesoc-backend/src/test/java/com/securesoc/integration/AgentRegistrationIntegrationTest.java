@@ -1,12 +1,14 @@
 package com.securesoc.integration;
 
+import com.securesoc.entity.EndpointDevice;
+import com.securesoc.entity.Laboratory;
+import com.securesoc.repository.EndpointDeviceRepository;
+import com.securesoc.repository.LaboratoryRepository;
+import com.securesoc.security.TokenHasher;
+import com.securesoc.service.AgentService;
 import com.securesoc.config.AgentProperties;
 import com.securesoc.dto.agent.AgentRegisterRequest;
 import com.securesoc.dto.agent.AgentRegisterResponse;
-import com.securesoc.entity.EndpointDevice;
-import com.securesoc.repository.EndpointDeviceRepository;
-import com.securesoc.security.TokenHasher;
-import com.securesoc.service.AgentService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +71,26 @@ class AgentRegistrationIntegrationTest {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final Set<UUID> createdEndpointIds = new LinkedHashSet<>();
+
+    @Autowired
+    private LaboratoryRepository laboratoryRepository;
+
+    private final Set<UUID> createdLaboratoryIds = new LinkedHashSet<>();
+
+    private Laboratory createLaboratory() {
+        String suffix = UUID.randomUUID()
+                .toString()
+                .replace("-", "")
+                .substring(0, 12);
+
+        Laboratory lab = new Laboratory();
+        lab.setName("IT-AGENT-LAB-" + suffix);
+        lab.setCode("IT" + suffix.substring(0, 10));
+
+        Laboratory saved = laboratoryRepository.saveAndFlush(lab);
+        createdLaboratoryIds.add(saved.getId());
+        return saved;
+    }
 
     // 1. First registration with deviceId creates exactly one EndpointDevice.
     @Test
@@ -293,14 +315,90 @@ class AgentRegistrationIntegrationTest {
         assertEquals(1, countByDeviceId(deviceId));
     }
 
+    @Test
+    void newRegistration_withLabId_remainsUnassigned() {
+        Laboratory lab = createLaboratory();
+
+        AgentRegisterResponse response = register(
+                request(
+                        newDeviceId(),
+                        randomMacAddress(),
+                        "10.0.0.10",
+                        "LAB-PC-NEW",
+                        lab.getId().toString()
+                )
+        );
+
+        EndpointDevice device = endpointDeviceRepository
+                .findById(response.endpointId())
+                .orElseThrow();
+
+        assertNull(
+                device.getLab(),
+                "An agent must not assign itself to a laboratory during registration"
+        );
+    }
+
+    @Test
+    void reRegistration_withLabId_preservesExistingLab() {
+        Laboratory labA = createLaboratory();
+        Laboratory labB = createLaboratory();
+
+        String deviceId = newDeviceId();
+        String mac = randomMacAddress();
+
+        AgentRegisterResponse first = register(
+                request(deviceId, mac, "10.0.0.10", "LAB-PC-ASSIGNED")
+        );
+
+        EndpointDevice endpoint = endpointDeviceRepository
+                .findById(first.endpointId())
+                .orElseThrow();
+
+        endpoint.setLab(labA);
+        endpointDeviceRepository.saveAndFlush(endpoint);
+
+        AgentRegisterResponse second = register(
+                request(
+                        deviceId,
+                        mac,
+                        "10.0.0.11",
+                        "LAB-PC-ASSIGNED",
+                        labB.getId().toString()
+                )
+        );
+
+        assertEquals(first.endpointId(), second.endpointId());
+
+        EndpointDevice reloaded = endpointDeviceRepository
+                .findById(second.endpointId())
+                .orElseThrow();
+
+        assertNotNull(reloaded.getLab());
+        assertEquals(
+                labA.getId(),
+                reloaded.getLab().getId(),
+                "Re-registration must preserve the existing lab assignment"
+        );
+    }
+
     @AfterEach
     void cleanUpCommittedFixtures() {
+        // Delete endpoints first because they may reference laboratories.
         createdEndpointIds.forEach(id -> {
             if (endpointDeviceRepository.existsById(id)) {
                 endpointDeviceRepository.deleteById(id);
             }
         });
         createdEndpointIds.clear();
+
+        // Delete test laboratories after their endpoints.
+        createdLaboratoryIds.forEach(id -> {
+            if (laboratoryRepository.existsById(id)) {
+                laboratoryRepository.deleteById(id);
+            }
+        });
+        createdLaboratoryIds.clear();
     }
 
     private AgentRegisterResponse register(AgentRegisterRequest request) {
@@ -309,9 +407,26 @@ class AgentRegistrationIntegrationTest {
         return response;
     }
 
-    private static AgentRegisterRequest request(String deviceId, String mac, String ip, String hostname) {
-        return new AgentRegisterRequest(hostname, mac, ip, "Windows", "10.0.19045", "Test CPU",
-            8192, 256, "0.1.0-TEST", null, deviceId);
+    private static AgentRegisterRequest request(
+            String deviceId, String mac, String ip, String hostname) {
+        return request(deviceId, mac, ip, hostname, null);
+    }
+
+    private static AgentRegisterRequest request(
+            String deviceId, String mac, String ip, String hostname, String labId) {
+        return new AgentRegisterRequest(
+                hostname,
+                mac,
+                ip,
+                "Windows",
+                "10.0.19045",
+                "Test CPU",
+                8192,
+                256,
+                "0.1.0-TEST",
+                labId,
+                deviceId
+        );
     }
 
     private long countByDeviceId(String deviceId) {

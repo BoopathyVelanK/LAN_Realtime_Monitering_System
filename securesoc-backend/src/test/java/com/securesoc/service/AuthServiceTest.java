@@ -3,6 +3,7 @@ package com.securesoc.service;
 import com.securesoc.detection.DetectionContext;
 import com.securesoc.detection.DetectionEngine;
 import com.securesoc.dto.AuthResponse;
+import com.securesoc.entity.RefreshToken;
 import com.securesoc.entity.User;
 import com.securesoc.exception.AccountLockedException;
 import com.securesoc.exception.UnauthorizedException;
@@ -195,5 +196,87 @@ class AuthServiceTest {
             () -> authService.login("ghost", "whatever", "127.0.0.1"));
 
         verifyNoInteractions(authFailureRecorder, detectionEngine, passwordEncoder);
+    }
+
+    // =====================================================================
+    // Refresh: disabled and locked accounts must not receive new tokens
+    // =====================================================================
+
+    @Test
+    void refresh_disabledUser_throwsUnauthorizedWithoutRotatingToken() {
+        User user = user();
+        user.setEnabled(false);
+
+        RefreshToken refreshToken = new RefreshToken();
+        refreshToken.setUser(user);
+        refreshToken.setExpiresAt(Instant.now().plusSeconds(3600));
+
+        when(refreshTokenRepository.findByTokenHash(any()))
+            .thenReturn(Optional.of(refreshToken));
+
+        assertThrows(
+            UnauthorizedException.class,
+            () -> authService.refresh("valid-refresh-token")
+        );
+
+        verify(refreshTokenRepository).findByTokenHash(any());
+        verify(refreshTokenRepository, never()).save(any(RefreshToken.class));
+        verifyNoInteractions(jwtService);
+    }
+
+    @Test
+    void refresh_lockedUser_throwsAccountLockedWithoutRotatingToken() {
+        User user = user();
+        user.setLockedUntil(Instant.now().plusSeconds(60));
+
+        RefreshToken refreshToken = new RefreshToken();
+        refreshToken.setUser(user);
+        refreshToken.setExpiresAt(Instant.now().plusSeconds(3600));
+
+        when(refreshTokenRepository.findByTokenHash(any()))
+            .thenReturn(Optional.of(refreshToken));
+
+        assertThrows(
+            AccountLockedException.class,
+            () -> authService.refresh("valid-refresh-token")
+        );
+
+        verify(refreshTokenRepository).findByTokenHash(any());
+        verify(refreshTokenRepository, never()).save(any(RefreshToken.class));
+        verifyNoInteractions(jwtService);
+    }
+
+    @Test
+    void refresh_enabledUnlockedUser_rotatesTokenSuccessfully() {
+        User user = user();
+
+        RefreshToken refreshToken = new RefreshToken();
+        refreshToken.setUser(user);
+        refreshToken.setExpiresAt(Instant.now().plusSeconds(3600));
+
+        when(refreshTokenRepository.findByTokenHash(any()))
+            .thenReturn(Optional.of(refreshToken));
+        when(jwtService.generateAccessToken(eq(userId), eq("someone"), any()))
+            .thenReturn("new-access-token");
+        when(jwtService.getRefreshTokenTtlSeconds()).thenReturn(3600L);
+        when(jwtService.getAccessTokenTtlSeconds()).thenReturn(900L);
+
+        AuthResponse response = authService.refresh("valid-refresh-token");
+
+        assertEquals("new-access-token", response.accessToken());
+        assertEquals(user, refreshToken.getUser());
+        // The presented token should be revoked before a replacement is saved.
+        org.junit.jupiter.api.Assertions.assertNotNull(refreshToken.getRevokedAt());
+
+        verify(refreshTokenRepository).findByTokenHash(any());
+        verify(refreshTokenRepository).save(refreshToken);
+        verify(refreshTokenRepository).save(
+            org.mockito.ArgumentMatchers.argThat(token ->
+                token != refreshToken
+                    && token.getUser() == user
+                    && token.getTokenHash() != null
+            )
+        );
+        verify(jwtService).generateAccessToken(eq(userId), eq("someone"), any());
     }
 }

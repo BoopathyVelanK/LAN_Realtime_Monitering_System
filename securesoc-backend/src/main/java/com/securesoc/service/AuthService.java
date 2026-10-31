@@ -121,22 +121,38 @@ public class AuthService {
         return issueTokens(user);
     }
 
+
     @Transactional
     public AuthResponse refresh(String rawRefreshToken) {
         String tokenHash = TokenHasher.sha256Hex(rawRefreshToken);
+
         RefreshToken existing = refreshTokenRepository.findByTokenHash(tokenHash)
             .filter(RefreshToken::isActive)
-            .orElseThrow(() -> new UnauthorizedException("Refresh token is invalid or expired"));
+            .orElseThrow(() ->
+                new UnauthorizedException("Refresh token is invalid or expired"));
 
-        // Rotation-on-use: the presented token is immediately revoked and a
-        // brand new one issued, so a stolen-but-unused refresh token can
-        // only ever be used once before both the thief and the legitimate
-        // holder discover it's dead.
+        User user = existing.getUser();
+
+        // Reject disabled accounts.
+        if (!user.isEnabled()) {
+            throw new UnauthorizedException("This account has been disabled");
+        }
+
+        // Reject accounts that are currently locked.
+        if (user.getLockedUntil() != null
+                && user.getLockedUntil().isAfter(Instant.now())) {
+            throw new AccountLockedException(
+                "Account is temporarily locked. Try again later.");
+        }
+
+        // Revoke the old token only after account-status checks pass.
         existing.setRevokedAt(Instant.now());
         refreshTokenRepository.save(existing);
 
-        return issueTokens(existing.getUser());
+        // Issue replacement tokens for the validated user.
+        return issueTokens(user);
     }
+
 
     @Transactional
     public void logout(String rawRefreshToken) {
